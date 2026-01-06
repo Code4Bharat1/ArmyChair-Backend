@@ -4,16 +4,14 @@ import mongoose from "mongoose";
   // CREATE RAW MATERIAL
 export const createRaw = async (req, res) => {
   try {
-    const { ProductName, type, colour, setNo, company } = req.body;
+    const { productName, type, colour, setNo, company } = req.body;
 
-    if ( !ProductName || !type || !colour || setNo === undefined || !company ) {
+    if ( !productName || !type || !colour || setNo === undefined || !company ) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
- 
-
     const raw = await Raw.create({
-      ProductName,
+      productName,
       type,
       colour,
       setNo,
@@ -40,27 +38,6 @@ export const getAllRaw = async (req, res) => {
       count: rawMaterials.length,
       rawMaterials,
     });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-  // GET RAW MATERIAL BY ID
-export const getRawById = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid raw material ID" });
-    }
-
-    const raw = await Raw.findById(id);
-
-    if (!raw) {
-      return res.status(404).json({ message: "Raw material not found" });
-    }
-
-    res.status(200).json(raw);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

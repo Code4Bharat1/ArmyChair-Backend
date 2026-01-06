@@ -2,17 +2,23 @@ import mongoose from "mongoose";
 
 const inventorySchema = new mongoose.Schema(
   {
-    ProductName: { type: String, required: true },
-    VendorName: { type: String, required: true },
-    Quantity: { type: Number, required: true },
+    chairType: { type: String, required: true },
+    quantity: { type: Number, required: true },
 
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+    
     createdByRole: {
       type: String,
       enum: ["admin", "user"],
+    },
+
+    priority: {
+      type: String,
+      enum: ["high", "low"],
+      default: "high",
     },
   },
   { timestamps: true }

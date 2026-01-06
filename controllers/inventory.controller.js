@@ -1,24 +1,25 @@
 import Inventory from "../models/inventory.model.js";
-
-/* ============================
-   CREATE INVENTORY ITEM
-   (Admin + User allowed)
-============================ */
+import mongoose from "mongoose";
+ //  CREATE INVENTORY ITEM
 export const createInventory = async (req, res) => {
   try {
-    const { ProductName, VendorName, Quantity } = req.body;
+    const { chairType, quantity } = req.body || {};
 
-    if (!ProductName || !VendorName || Quantity === undefined) {
+    if (!chairType || quantity === undefined) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    // Optional: attach who added the item
+    const qty = Number(quantity);
+
     const inventory = await Inventory.create({
-      ProductName,
-      VendorName,
-      Quantity,
-      createdBy: req.user?.id, // requires auth middleware
-      createdByRole: req.user?.role,
+      chairType,
+      quantity: qty,
+
+      /* AUTO PRIORITY LOGIC */
+      priority: qty < 100 ? "low" : "high",
+
+      createdBy: req.user ? req.user.id : null,
+      createdByRole: req.user ? req.user.role : null,
     });
 
     res.status(201).json({
@@ -30,51 +31,46 @@ export const createInventory = async (req, res) => {
   }
 };
 
-/* ============================
-   GET ALL INVENTORY
-   (Admin + User)
-============================ */
+ //  GET ALL INVENTORY
 export const getAllInventory = async (req, res) => {
   try {
-    const inventory = await Inventory.find()
-      .sort({ createdAt: -1 });
+    const inventory = await Inventory.find().sort({ createdAt: -1 });
 
-    res.status(200).json(inventory);
+    res.status(200).json({
+      count: inventory.length,
+      inventory,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-/* ============================
-   GET INVENTORY BY ID
-============================ */
-export const getInventoryById = async (req, res) => {
-  try {
-    const inventory = await Inventory.findById(req.params.id);
-
-    if (!inventory) {
-      return res.status(404).json({ message: "Inventory not found" });
-    }
-
-    res.status(200).json(inventory);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-/* ============================
-   UPDATE INVENTORY
-   (Admin only)
-============================ */
+//   UPDATE INVENTORY
 export const updateInventory = async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Admin access only" });
+    if (!req.user) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: "Invalid inventory ID" });
+    }
+
+    const updateData = {};
+
+    if (req.body.chairType !== undefined) {
+      updateData.chairType = req.body.chairType;
+    }
+
+    if (req.body.quantity !== undefined) {
+      const qty = Number(req.body.quantity);
+      updateData.quantity = qty;
+      updateData.priority = qty < 100 ? "low" : "high";
     }
 
     const updatedInventory = await Inventory.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updateData,
       { new: true, runValidators: true }
     );
 
@@ -87,18 +83,20 @@ export const updateInventory = async (req, res) => {
       inventory: updatedInventory,
     });
   } catch (error) {
+    console.error("UPDATE INVENTORY ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
 
-/* ============================
-   DELETE INVENTORY
-   (Admin only)
-============================ */
+// DELETE INVENTORY
 export const deleteInventory = async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Admin access only" });
+    if (!req.user) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: "Invalid inventory ID" });
     }
 
     const inventory = await Inventory.findByIdAndDelete(req.params.id);
@@ -107,8 +105,12 @@ export const deleteInventory = async (req, res) => {
       return res.status(404).json({ message: "Inventory not found" });
     }
 
-    res.status(200).json({ message: "Inventory deleted successfully" });
+    res.status(200).json({
+      message: "Inventory deleted successfully",
+      inventory,
+    });
   } catch (error) {
+    console.error("DELETE INVENTORY ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
