@@ -7,8 +7,7 @@ const rawSchema = new mongoose.Schema(
     colour: { type: String, required: true },
     setNo: { type: Number, required: true },
     company: { type: String, required: true },
-    date: { type: Date, required: true },
-
+  
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
