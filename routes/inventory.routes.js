@@ -4,13 +4,13 @@ import {protect} from "../middlewares/auth.middleware.js"
 
 const router = express.Router();
 
-//Full Parts
+//Full Chairs
 router.post("/", protect, createInventory);
 router.get("/", getAllInventory);
 router.delete("/delete/:id", protect, deleteInventory);
 router.patch("/update/:id", protect, updateInventory);
 
-// Spar Parts
+// Spare Parts 
 router.post("/spare-parts", createSpareParts);
 router.get("/spare-parts", getSpareParts);
 router.patch("/spare-parts/update/:id", updateSparePart);

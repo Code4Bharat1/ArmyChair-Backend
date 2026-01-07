@@ -35,7 +35,7 @@ export const createInventory = async (req, res) => {
  //  GET ALL INVENTORY
 export const getAllInventory = async (req, res) => {
   try {
-    const inventory = await Inventory.find().sort({ createdAt: -1 });
+    const inventory = await Inventory.find({ type: "FULL" }).sort({ createdAt: -1 });
 
     res.status(200).json({
       count: inventory.length,
@@ -165,7 +165,8 @@ export const getSpareParts = async (req, res) => {
   try {
     const parts = await Inventory.find({ type: "SPARE" }).sort({ createdAt: -1 });
 
-    res.json({
+    res.status(200).json({
+      count: parts.length,
       success: true,
       inventory: parts,
     });
