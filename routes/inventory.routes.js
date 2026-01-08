@@ -5,8 +5,8 @@ import {protect} from "../middlewares/auth.middleware.js"
 const router = express.Router();
 
 //Full Chairs
-router.post("/", protect, createInventory);
-router.get("/", getAllInventory);
+router.post("/",protect, createInventory);
+router.get("/", protect,getAllInventory);
 router.delete("/delete/:id", protect, deleteInventory);
 router.patch("/update/:id", protect, updateInventory);
 

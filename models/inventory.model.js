@@ -20,7 +20,7 @@ const inventorySchema = new mongoose.Schema(
     
     createdByRole: {
       type: String,
-      enum: ["admin", "user"],
+      enum: ["admin", "user", "warehouse"],
     },
 
     priority: {

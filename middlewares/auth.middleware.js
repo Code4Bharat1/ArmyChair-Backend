@@ -26,3 +26,21 @@ export const adminOnly = (req, res, next) => {
   }
   next();
 };
+
+export const fittingManagerOnly = (req, res, next) => {
+  if (re.user.role !== "fitting") {
+    return res.status(403).json({ message: "Fitting manager only route" });
+  }
+}
+
+export const warehouseManagerOnly = (req, res, next) => {
+  if (req.user.role !== "warehouse") {
+    return res.status(403).json({ message: "Warehouse manager only route" });
+  }
+}
+
+export const salesManagerOnly = (req, res, next) => {
+  if (req.user.role !== "sales") {
+    return res.status(403).json({ message: "sales manager only route" });
+  }
+}

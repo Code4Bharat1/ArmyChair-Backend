@@ -1,6 +1,5 @@
 import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.routes.js";
-import rawRoutes from "./routes/raw.routes.js";
 import inventoryRoutes from "./routes/inventory.routes.js";
 import cors from "cors";
 import express from "express";
@@ -23,10 +22,7 @@ app.get("/api/health", (req, res) => {
 
 // authentication
 app.use("/api/auth", authRoutes);
-app.use("/api/auth", authRoutes);
 
-// raw materials
-app.use("/api/raw", rawRoutes);
 
 app.use("/api/inventory", inventoryRoutes);
 

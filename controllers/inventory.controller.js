@@ -62,7 +62,11 @@ export const updateInventory = async (req, res) => {
     if (req.body.chairType !== undefined) {
       updateData.chairType = req.body.chairType;
     }
+    if (req.body.vendor !== undefined) {
+      updateData.vendor = req.body.vendor;
+    }
 
+    
     if (req.body.quantity !== undefined) {
       const qty = Number(req.body.quantity);
       updateData.quantity = qty;
