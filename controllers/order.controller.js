@@ -146,6 +146,7 @@ export const updateOrderProgress = async (req, res) => {
       "FITTING_IN_PROGRESS",
       "FITTING_COMPLETED",
       "READY_FOR_DISPATCH",
+      "DISPATCHED",
     ];
 
     if (!allowed.includes(progress)) {

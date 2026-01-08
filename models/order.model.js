@@ -39,6 +39,8 @@ const orderSchema = new mongoose.Schema(
         "FITTING_IN_PROGRESS",
         "FITTING_COMPLETED",
         "READY_FOR_DISPATCH",
+        "DISPATCHED", 
+
       ],
       default: "ORDER_PLACED",
     },
