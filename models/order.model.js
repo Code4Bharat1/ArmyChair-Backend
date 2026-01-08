@@ -2,30 +2,71 @@ import mongoose from "mongoose";
 
 const orderSchema = new mongoose.Schema(
   {
-    orderId: { type: String, required: true, unique: true },
-
-    dispatchedTo: { type: String, required: true },
-
-    chairModel: { type: String, required: true },
-
-    chairDetail: { type: String, default: "" },
-
-    orderDate: { type: Date, required: true },
-
-    deliveryDate: { type: Date, required: true },
-
-    onTime: { type: Boolean, default: true },
-
-    assembly: {
+    orderId: {
       type: String,
-      enum: ["Assembled", "Dismantled"],
+      required: true,
+      unique: true,
+      trim: true,
+    },
+
+    dispatchedTo: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    chairModel: {
+      type: String,
       required: true,
     },
 
-    status: {
+    chairDetail: {
       type: String,
-      enum: ["Pending", "Dispatched", "Delivered", "Cancelled"],
-      default: "Pending",
+    },
+
+    orderDate: {
+      type: Date,
+      required: true,
+    },
+
+    deliveryDate: {
+      type: Date,
+      required: true,
+    },
+
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+
+    progress: {
+      type: String,
+      enum: [
+        "warehouse",
+        "fitting",
+        "order_ready",
+        "dispatched",
+        "delivered",
+      ],
+      default: "warehouse",
+    },
+
+    onTime: {
+      type: Boolean,
+      default: true,
+    },
+
+    assembly: {
+      type: String,
+      enum: ["Assembled", "Unassembled"],
+      default: "Unassembled",
+    },
+
+    amount: {
+      type: Number,
+      required: true,
+      min: 0,
     },
   },
   { timestamps: true }

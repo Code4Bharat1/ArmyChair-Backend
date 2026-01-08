@@ -5,6 +5,7 @@ import inventoryRoutes from "./routes/inventory.routes.js";
 import cors from "cors";
 import express from "express";
 import dotenv from "dotenv";
+import orderRoutes from "./routes/order.routes.js";
 
 dotenv.config();
 
@@ -28,6 +29,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/raw", rawRoutes);
 
 app.use("/api/inventory", inventoryRoutes);
+
+app.use("/api/orders", orderRoutes);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
