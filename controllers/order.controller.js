@@ -1,34 +1,26 @@
 import Order from "../models/order.model.js";
 
-/* ================= CREATE ORDER ================= */
 export const createOrder = async (req, res) => {
   try {
-    const {
-      orderId,
-      dispatchedTo,
-      chairModel,
-      chairDetail,
-      orderDate,
-      deliveryDate,
-      quantity,
-      assembly,
-      onTime,
-      amount,
-    } = req.body;
+    const { dispatchedTo, chairModel, orderDate, quantity } = req.body;
 
-    const order = await Order.create({
-      orderId,
+    if (!dispatchedTo || !chairModel || !orderDate || !quantity) {
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required",
+      });
+    }
+
+    const order = new Order({
       dispatchedTo,
       chairModel,
-      chairDetail,
       orderDate,
-      deliveryDate,
       quantity: Number(quantity),
-      assembly,
-      onTime,
-      amount: Number(amount),
-      progress: "warehouse", // ✅ default step
+      createdBy: req.user?._id || req.user?.id,
+      progress: "ORDER_PLACED",
     });
+
+    await order.save(); // 🔥 orderId auto-generated here
 
     res.status(201).json({
       success: true,
@@ -36,6 +28,7 @@ export const createOrder = async (req, res) => {
       order,
     });
   } catch (error) {
+    console.error("CREATE ORDER ERROR:", error);
     res.status(400).json({
       success: false,
       message: error.message,
@@ -43,10 +36,21 @@ export const createOrder = async (req, res) => {
   }
 };
 
-/* ================= GET ALL ORDERS ================= */
+
+
 export const getOrders = async (req, res) => {
   try {
-    const orders = await Order.find().sort({ createdAt: -1 });
+    const { progress, mine } = req.query;
+
+    const filter = {};
+
+    if (progress) filter.progress = progress;
+
+    if (mine === "true") filter.createdBy = req.user.id;
+
+    const orders = await Order.find(filter)
+      .sort({ createdAt: -1 })
+      .populate("createdBy", "name email");
 
     res.status(200).json({
       success: true,
@@ -63,7 +67,10 @@ export const getOrders = async (req, res) => {
 /* ================= GET SINGLE ORDER ================= */
 export const getOrderById = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id);
+    const order = await Order.findById(req.params.id).populate(
+      "createdBy",
+      "name email"
+    );
 
     if (!order) {
       return res.status(404).json({
@@ -84,28 +91,22 @@ export const getOrderById = async (req, res) => {
   }
 };
 
-/* ================= UPDATE ORDER ================= */
+/* ================= UPDATE ORDER (SALES EDIT) ================= */
 export const updateOrder = async (req, res) => {
   try {
     const allowedUpdates = [
       "dispatchedTo",
       "chairModel",
-      "chairDetail",
-      "deliveryDate",
+      "orderDate",
       "quantity",
-      "assembly",
-      "onTime",
-      "amount",
-      "progress",
     ];
 
     const updates = {};
+
     for (const key of allowedUpdates) {
       if (req.body[key] !== undefined) {
         updates[key] =
-          key === "quantity" || key === "amount"
-            ? Number(req.body[key])
-            : req.body[key];
+          key === "quantity" ? Number(req.body[key]) : req.body[key];
       }
     }
 
@@ -134,6 +135,37 @@ export const updateOrder = async (req, res) => {
     });
   }
 };
+
+export const updateOrderProgress = async (req, res) => {
+  try {
+    const { progress } = req.body;
+
+    const allowed = [
+      "ORDER_PLACED",
+      "WAREHOUSE_COLLECTED",
+      "FITTING_IN_PROGRESS",
+      "FITTING_COMPLETED",
+      "READY_FOR_DISPATCH",
+    ];
+
+    if (!allowed.includes(progress)) {
+      return res.status(400).json({ message: "Invalid progress" });
+    }
+
+    const order = await Order.findByIdAndUpdate(
+      req.params.id,
+      { progress },
+      { new: true }
+    );
+
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    res.status(200).json({ success: true, order });
+  } catch (error) {
+    res.status(500).json({ message: "Status update failed" });
+  }
+};
+
 
 /* ================= DELETE ORDER ================= */
 export const deleteOrder = async (req, res) => {

@@ -4,7 +4,6 @@ const orderSchema = new mongoose.Schema(
   {
     orderId: {
       type: String,
-      required: true,
       unique: true,
       trim: true,
     },
@@ -18,18 +17,10 @@ const orderSchema = new mongoose.Schema(
     chairModel: {
       type: String,
       required: true,
-    },
-
-    chairDetail: {
-      type: String,
+      trim: true,
     },
 
     orderDate: {
-      type: Date,
-      required: true,
-    },
-
-    deliveryDate: {
       type: Date,
       required: true,
     },
@@ -43,33 +34,45 @@ const orderSchema = new mongoose.Schema(
     progress: {
       type: String,
       enum: [
-        "warehouse",
-        "fitting",
-        "order_ready",
-        "dispatched",
-        "delivered",
+        "ORDER_PLACED",
+        "WAREHOUSE_COLLECTED",
+        "FITTING_IN_PROGRESS",
+        "FITTING_COMPLETED",
+        "READY_FOR_DISPATCH",
       ],
-      default: "warehouse",
+      default: "ORDER_PLACED",
     },
 
-    onTime: {
-      type: Boolean,
-      default: true,
-    },
-
-    assembly: {
-      type: String,
-      enum: ["Assembled", "Unassembled"],
-      default: "Unassembled",
-    },
-
-    amount: {
-      type: Number,
-      required: true,
-      min: 0,
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
     },
   },
   { timestamps: true }
 );
+
+/* =========================================================
+   ✅ AUTO ORDER ID GENERATOR
+========================================================= */
+
+orderSchema.pre("save", async function () {
+  if (this.orderId) return;
+
+  const year = new Date().getFullYear();
+
+  const lastOrder = await mongoose
+    .model("Order")
+    .findOne({ orderId: { $regex: `^ORD-${year}-` } })
+    .sort({ createdAt: -1 });
+
+  let nextNumber = 1;
+
+  if (lastOrder?.orderId) {
+    const lastNum = parseInt(lastOrder.orderId.split("-")[2]);
+    nextNumber = lastNum + 1;
+  }
+
+  this.orderId = `ORD-${year}-${String(nextNumber).padStart(6, "0")}`;
+});
 
 export default mongoose.model("Order", orderSchema);
