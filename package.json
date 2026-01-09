@@ -5,10 +5,9 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
-  "dev": "nodemon server.js",
-  "start": "node server.js"
-}
-,
+    "dev": "nodemon server.js",
+    "start": "node server.js"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Code4Bharat1/ArmyChair-Backend.git"
@@ -16,7 +15,6 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-
   "bugs": {
     "url": "https://github.com/Code4Bharat1/ArmyChair-Backend/issues"
   },
@@ -26,8 +24,11 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^9.1.1"
+    "limiter": "^3.0.0",
+    "mongoose": "^9.1.1",
+    "rate": "^0.1.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"
