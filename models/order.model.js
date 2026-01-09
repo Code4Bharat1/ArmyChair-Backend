@@ -25,10 +25,20 @@ const orderSchema = new mongoose.Schema(
       required: true,
     },
 
+    deliveryDate: {
+      type: Date,
+      required: true,
+    },
+
     quantity: {
       type: Number,
       required: true,
       min: 1,
+    },
+
+    isPartial: {
+      type: Boolean,
+      default: false, // ✅ NEW
     },
 
     progress: {
@@ -39,8 +49,7 @@ const orderSchema = new mongoose.Schema(
         "FITTING_IN_PROGRESS",
         "FITTING_COMPLETED",
         "READY_FOR_DISPATCH",
-        "DISPATCHED", 
-
+        "DISPATCHED",
       ],
       default: "ORDER_PLACED",
     },
