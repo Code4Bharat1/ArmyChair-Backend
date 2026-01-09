@@ -1,6 +1,7 @@
 import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.routes.js";
 import inventoryRoutes from "./routes/inventory.routes.js";
+import warehouseRoutes from "./routes/warehouse.routes.js";
 import cors from "cors";
 import express from "express";
 import dotenv from "dotenv";
@@ -29,6 +30,7 @@ app.use("/api/auth", authRoutes);
 
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/warehouse", warehouseRoutes);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
