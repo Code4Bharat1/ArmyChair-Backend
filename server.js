@@ -13,11 +13,11 @@ import { apiLimiter, authLimiter } from "./middlewares/rateLimiter.js";
 
 dotenv.config();
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5005;
 const app = express();
 
 app.use(cors({
-  origin: ["armychair.nexcorealliance.com", "http://localhost:3000"],
+  origin: ["http://armychair.nexcorealliance.com", "http://localhost:3006"],
   credentials: true,
 }));
 
