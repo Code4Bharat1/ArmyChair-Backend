@@ -2,9 +2,16 @@ import Order from "../models/order.model.js";
 
 export const createOrder = async (req, res) => {
   try {
-    const { dispatchedTo, chairModel, orderDate, quantity } = req.body;
+    const {
+      dispatchedTo,
+      chairModel,
+      orderDate,
+      deliveryDate,
+      quantity,
+      isPartial,
+    } = req.body;
 
-    if (!dispatchedTo || !chairModel || !orderDate || !quantity) {
+    if (!dispatchedTo || !chairModel || !orderDate || !deliveryDate || !quantity) {
       return res.status(400).json({
         success: false,
         message: "All fields are required",
@@ -15,12 +22,14 @@ export const createOrder = async (req, res) => {
       dispatchedTo,
       chairModel,
       orderDate,
+      deliveryDate,
       quantity: Number(quantity),
+      isPartial: Boolean(isPartial), // ✅
       createdBy: req.user?._id || req.user?.id,
       progress: "ORDER_PLACED",
     });
 
-    await order.save(); // 🔥 orderId auto-generated here
+    await order.save();
 
     res.status(201).json({
       success: true,
@@ -38,31 +47,31 @@ export const createOrder = async (req, res) => {
 
 
 
+
 export const getOrders = async (req, res) => {
   try {
-    const { progress, mine } = req.query;
+    const { progress, mine, forWarehouse } = req.query;
 
     const filter = {};
 
     if (progress) filter.progress = progress;
-
     if (mine === "true") filter.createdBy = req.user.id;
+
+    // ✅ ADD THIS (nothing else touched)
+    if (forWarehouse === "true") {
+      filter.isPartial = false;
+    }
 
     const orders = await Order.find(filter)
       .sort({ createdAt: -1 })
       .populate("createdBy", "name email");
 
-    res.status(200).json({
-      success: true,
-      orders,
-    });
+    res.status(200).json({ success: true, orders });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch orders",
-    });
+    res.status(500).json({ success: false, message: "Failed to fetch orders" });
   }
 };
+
 
 /* ================= GET SINGLE ORDER ================= */
 export const getOrderById = async (req, res) => {
@@ -98,7 +107,9 @@ export const updateOrder = async (req, res) => {
       "dispatchedTo",
       "chairModel",
       "orderDate",
+      "deliveryDate",
       "quantity",
+      "isPartial",
     ];
 
     const updates = {};
