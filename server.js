@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 5005;
 const app = express();
 
 app.use(cors({
-  origin: ["http://armychair.nexcorealliance.com", "http://localhost:3006"],
+  origin: ["https://armychair.nexcorealliance.com", "https://www.armychair.nexcorealliance.com", "http://localhost:3006"],
   credentials: true,
 }));
 
