@@ -39,16 +39,20 @@ const userSchema = new mongoose.Schema(
       unique: true,
       match: [/^\d{12}$/, "Aadhar number must be 12 digits"],
     },
-
-    dateOfBirth: {
-      type: Date,
-      required: true,
-    },
-
     photo: {
       type: String, // store image URL or file path (Cloudinary / S3 / local)
       default: "",
     },
+    aadharPhotoFront: {
+  type: String, // base64 or URL (Cloudinary/S3)
+  required: true,
+},
+
+aadharPhotoBack: {
+  type: String,
+  required: true,
+},
+
   },
   { timestamps: true }
 );

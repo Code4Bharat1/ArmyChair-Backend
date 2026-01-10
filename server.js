@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 5005;
 const app = express();
 
 app.use(cors({
-  origin: ["https://armychair.nexcorealliance.com", "https://www.armychair.nexcorealliance.com", "http://localhost:3006"],
+  origin: ["https://armychair.nexcorealliance.com", "https://www.armychair.nexcorealliance.com", "http://localhost:3000"],
   credentials: true,
 }));
 
@@ -40,6 +40,7 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/warehouse", warehouseRoutes);
 
 app.use("/api/returns", router);
+app.use("/api", authRoutes);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
