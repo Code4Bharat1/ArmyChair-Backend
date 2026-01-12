@@ -44,3 +44,19 @@ export const salesManagerOnly = (req, res, next) => {
     return res.status(403).json({ message: "sales manager only route" });
   }
 }
+export const returnAccess = (req, res, next) => {
+  const role = req.user.role;
+
+  if (
+    role === "admin" ||
+    role === "sales" ||
+    role === "warehouse"
+  ) {
+    return next();
+  }
+
+  return res.status(403).json({
+    message: "You are not allowed to access Returns",
+  });
+};
+

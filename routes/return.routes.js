@@ -4,6 +4,7 @@ import {
   getAllReturns,
   moveReturnToInventory,
 } from "../controllers/return.controller.js";
+import { protect, returnAccess } from "../middlewares/auth.middleware.js";
 
 const router = express.Router();
 
