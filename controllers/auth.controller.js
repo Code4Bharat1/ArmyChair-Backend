@@ -11,29 +11,34 @@ export const signup = async (req, res) => {
   try {
     console.log("REQ BODY:", req.body);
     const {
-      name,
-      email,
-      password,
-      role,
-      mobile,
-      aadharNumber,
-      dateOfBirth,
-      photo,
-    } = req.body;
+  name,
+  email,
+  password,
+  role,
+  mobile,
+  aadharNumber,
+  dateOfBirth,
+  photo,
+  aadharPhotoFront,
+  aadharPhotoBack,
+} = req.body;
+
 
     // 🔎 Check required fields
     if (
-      !name ||
-      !email ||
-      !password ||
-      !mobile ||
-      !aadharNumber ||
-      !dateOfBirth
-    ) {
-      return res.status(400).json({
-        message: "All required fields must be provided",
-      });
-    }
+  !name ||
+  !email ||
+  !password ||
+  !mobile ||
+  !aadharNumber ||
+  !dateOfBirth ||
+  !aadharPhotoFront ||
+  !aadharPhotoBack
+) {
+  return res.status(400).json({
+    message: "All required fields including Aadhar photos must be provided",
+  });
+}
 
     // 🔎 Check if user already exists
     const userExists = await User.findOne({
@@ -51,15 +56,17 @@ export const signup = async (req, res) => {
 
     // 🧾 Create user
     await User.create({
-      name,
-      email,
-      password: hashedPassword,
-      role,
-      mobile,
-      aadharNumber,
-      dateOfBirth,
-      photo,
-    });
+  name,
+  email,
+  password: hashedPassword,
+  role,
+  mobile,
+  aadharNumber,
+  photo,
+  aadharPhotoFront,
+  aadharPhotoBack,
+});
+
 
     res.status(201).json({
       message: "Signup successful",
@@ -131,7 +138,6 @@ export const getAllStaff = async (req, res) => {
       { role: { $in: ["sales", "warehouse", "fitting"] } },
       {
         password: 0,
-        aadharNumber: 0,
         __v: 0,
       }
     ).sort({ createdAt: -1 });
@@ -143,4 +149,20 @@ export const getAllStaff = async (req, res) => {
     });
   }
 };
+export const getMe = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("-password");
 
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    return res.status(200).json({
+      user
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message
+    });
+  }
+};

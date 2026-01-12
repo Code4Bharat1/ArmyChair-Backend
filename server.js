@@ -38,8 +38,13 @@ app.use("/api/inventory", inventoryRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/warehouse", warehouseRoutes);
 
+<<<<<<< HEAD
 app.use("/api/returns",returnAccess);
 
+=======
+app.use("/api/returns", router);
+app.use("/api", authRoutes);
+>>>>>>> da6d506d3bcc89c184424fa620e0e3d79d34a455
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
