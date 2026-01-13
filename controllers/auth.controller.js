@@ -18,6 +18,7 @@ export const signup = async (req, res) => {
   mobile,
   aadharNumber,
   dateOfBirth,
+  bloodGroup,
   photo,
   aadharPhotoFront,
   aadharPhotoBack,
@@ -33,7 +34,8 @@ export const signup = async (req, res) => {
   !aadharNumber ||
   !dateOfBirth ||
   !aadharPhotoFront ||
-  !aadharPhotoBack
+  !aadharPhotoBack ||
+  !bloodGroup
 ) {
   return res.status(400).json({
     message: "All required fields including Aadhar photos must be provided",
@@ -62,6 +64,8 @@ export const signup = async (req, res) => {
   role,
   mobile,
   aadharNumber,
+  dateOfBirth,
+  bloodGroup,
   photo,
   aadharPhotoFront,
   aadharPhotoBack,

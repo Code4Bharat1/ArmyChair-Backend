@@ -1,27 +1,33 @@
 import Inventory from "../models/inventory.model.js";
 import mongoose from "mongoose";
+
+const getStockStatus = (qty, minQty) => {
+  if (qty === 0) return "Critical";
+  if (qty < minQty) return "Low";
+  if (qty > minQty * 2) return "Overstocked";
+  return "Healthy";
+};
+
  //  CREATE INVENTORY ITEM
 export const createInventory = async (req, res) => {
   try {
-    const { chairType, vendor, quantity } = req.body || {};
+    const { chairType, color, vendor, quantity, minQuantity} = req.body || {};
 
-    if (!chairType || !vendor || quantity === undefined) {
+    if (!chairType || !color || !vendor || quantity === undefined || minQuantity === undefined) {
+
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    const qty = Number(quantity);
-
     const inventory = await Inventory.create({
-      chairType,
-      quantity: qty,
-      vendor,
+  chairType,
+  color,
+  vendor,
+  quantity: Number(quantity),
+  minQuantity: Number(minQuantity),
 
-      /* AUTO PRIORITY LOGIC */
-      priority: qty < 100 ? "low" : "high",
-
-      createdBy: req.user ? req.user.id : null,
-      createdByRole: req.user ? req.user.role : null,
-    });
+  createdBy: req.user ? req.user.id : null,
+  createdByRole: req.user ? req.user.role : null,
+});
 
     res.status(201).json({
       message: "Inventory item added successfully",
@@ -37,14 +43,20 @@ export const getAllInventory = async (req, res) => {
   try {
     const inventory = await Inventory.find({ type: "FULL" }).sort({ createdAt: -1 });
 
+    const data = inventory.map((i) => ({
+      ...i.toObject(),
+      status: getStockStatus(i.quantity, i.minQuantity),
+    }));
+
     res.status(200).json({
-      count: inventory.length,
-      inventory,
+      count: data.length,
+      inventory: data,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 //   UPDATE INVENTORY
 export const updateInventory = async (req, res) => {

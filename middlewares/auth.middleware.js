@@ -28,7 +28,7 @@ export const adminOnly = (req, res, next) => {
 };
 
 export const fittingManagerOnly = (req, res, next) => {
-  if (re.user.role !== "fitting") {
+  if (req.user.role !== "fitting") {
     return res.status(403).json({ message: "Fitting manager only route" });
   }
 }

@@ -202,3 +202,24 @@ export const deleteOrder = async (req, res) => {
     });
   }
 };
+
+export const getOrderByOrderId = async (req, res) => {
+  try {
+    const order = await Order.findOne({ orderId: req.params.orderId });
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    return res.status(200).json({
+      order: {
+        orderId : order.orderId,
+        ChairType : order.chairModel,
+        vendor : order.dispatchedTo,
+        quanity : order.quantity,
+      },
+    });
+  } catch (error) {
+    console.error("Fetch Order By Order ID Error:", error);
+    return res.status(500).json({ message : "Server error"})
+  }
+  }
+

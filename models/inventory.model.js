@@ -23,6 +23,15 @@ const inventorySchema = new mongoose.Schema(
       enum: ["admin", "user", "warehouse"],
     },
 
+    color: {
+      type : String,
+      required : true,
+    },
+    minQuantity: {
+      type: Number,
+      required: true,
+    },
+
     priority: {
       type: String,
       enum: ["high", "low"],
