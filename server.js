@@ -7,8 +7,9 @@ import express from "express";
 import dotenv from "dotenv";
 import orderRoutes from "./routes/order.routes.js";
 import { apiLimiter, authLimiter } from "./middlewares/rateLimiter.js";
-import returnAccess from "./routes/return.routes.js";
+import returnRoutes from "./routes/return.routes.js";
 import transferRoutes from "./routes/transfer.routes.js";
+import taskRoutes from "./routes/task.routes.js";
 
 
 
@@ -40,12 +41,14 @@ app.use("/api/inventory", inventoryRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/warehouse", warehouseRoutes);
 
-app.use("/api/returns",returnAccess);
+app.use("/api/returns", returnRoutes);
 
 app.use("/api/transfer", transferRoutes);
 
 // app.use("/api/returns", router);
-app.use("/api", authRoutes);
+app.use("/api/auth", authRoutes);
+
+app.use("/api/tasks", taskRoutes);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
