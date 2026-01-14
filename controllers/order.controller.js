@@ -1,3 +1,4 @@
+//order controller
 import Order from "../models/order.model.js";
 
 export const createOrder = async (req, res) => {
@@ -9,6 +10,7 @@ export const createOrder = async (req, res) => {
       deliveryDate,
       quantity,
       isPartial,
+      salesPerson, // 👈 admin will send this
     } = req.body;
 
     if (!dispatchedTo || !chairModel || !orderDate || !deliveryDate || !quantity) {
@@ -18,14 +20,31 @@ export const createOrder = async (req, res) => {
       });
     }
 
+    const creatorId = req.user.id || req.user._id;
+    let assignedSalesPerson;
+
+    if (req.user.role === "admin") {
+      if (!salesPerson) {
+        return res.status(400).json({
+          success: false,
+          message: "Admin must assign a sales person",
+        });
+      }
+      assignedSalesPerson = salesPerson;
+    } else {
+      // sales creates order for self
+      assignedSalesPerson = creatorId;
+    }
+
     const order = new Order({
       dispatchedTo,
       chairModel,
       orderDate,
       deliveryDate,
       quantity: Number(quantity),
-      isPartial: Boolean(isPartial), // ✅
-      createdBy: req.user?._id || req.user?.id,
+      isPartial: Boolean(isPartial),
+      createdBy: creatorId,
+      salesPerson: assignedSalesPerson,
       progress: "ORDER_PLACED",
     });
 
@@ -48,30 +67,37 @@ export const createOrder = async (req, res) => {
 
 
 
+
 export const getOrders = async (req, res) => {
   try {
-    const { progress, mine, forWarehouse } = req.query;
-
     const filter = {};
+    const role = req.user.role;
+    const userId = req.user.id || req.user._id;
 
-    if (progress) filter.progress = progress;
-    if (mine === "true") filter.createdBy = req.user.id;
+    if (role === "sales") {
+      filter.salesPerson = userId;
+    }
 
-    // ✅ ADD THIS (nothing else touched)
-    if (forWarehouse === "true") {
+    if (role === "warehouse") {
       filter.isPartial = false;
     }
 
+    // admin → no filter
+
     const orders = await Order.find(filter)
       .sort({ createdAt: -1 })
-      .populate("createdBy", "name email");
+      .populate("createdBy", "name email")
+      .populate("salesPerson", "name email");
 
     res.status(200).json({ success: true, orders });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Failed to fetch orders" });
+    console.error("GET ORDERS ERROR:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch orders",
+    });
   }
 };
-
 
 /* ================= GET SINGLE ORDER ================= */
 export const getOrderById = async (req, res) => {
@@ -202,24 +228,3 @@ export const deleteOrder = async (req, res) => {
     });
   }
 };
-
-export const getOrderByOrderId = async (req, res) => {
-  try {
-    const order = await Order.findOne({ orderId: req.params.orderId });
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
-    return res.status(200).json({
-      order: {
-        orderId : order.orderId,
-        ChairType : order.chairModel,
-        vendor : order.dispatchedTo,
-        quanity : order.quantity,
-      },
-    });
-  } catch (error) {
-    console.error("Fetch Order By Order ID Error:", error);
-    return res.status(500).json({ message : "Server error"})
-  }
-  }
-

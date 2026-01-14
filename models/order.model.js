@@ -38,7 +38,7 @@ const orderSchema = new mongoose.Schema(
 
     isPartial: {
       type: Boolean,
-      default: false, // ✅ NEW
+      default: false,
     },
 
     progress: {
@@ -54,16 +54,25 @@ const orderSchema = new mongoose.Schema(
       default: "ORDER_PLACED",
     },
 
+    // 👇 WHO CREATED THE ORDER (ADMIN / SALES)
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
+      required: true,
+    },
+
+    // 👇 WHO OWNS THE ORDER (SALES PERSON)
+    salesPerson: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
     },
   },
   { timestamps: true }
 );
 
 /* =========================================================
-   ✅ AUTO ORDER ID GENERATOR
+   AUTO ORDER ID GENERATOR
 ========================================================= */
 
 orderSchema.pre("save", async function () {
