@@ -9,10 +9,11 @@ const orderSchema = new mongoose.Schema(
     },
 
     dispatchedTo: {
-      type: String,
-      required: true,
-      trim: true,
-    },
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Vendor",
+  required: true
+},
+
 
     chairModel: {
       type: String,

@@ -12,6 +12,7 @@ const returnSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    
 
     description: {
       type: String,
@@ -46,6 +47,16 @@ const returnSchema = new mongoose.Schema(
     location: {
       type: String,
     },
+    returnedFrom: {
+  type: String,
+  required: true,
+},
+
+deliveryDate: {
+  type: Date,
+  required: true,
+},
+
   },
   { timestamps: true }
 );

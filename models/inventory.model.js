@@ -4,7 +4,12 @@ const inventorySchema = new mongoose.Schema(
   {
     chairType: { type: String, required: true },
     quantity: { type: Number, required: true },
-    vendor: {type: String, required: true},           //from where the parts are sourced
+    vendor: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Vendor",
+  required: true
+},
+        
     location: { type: String }, 
 
     type: {

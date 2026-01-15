@@ -6,6 +6,7 @@ import {
   updateOrder,
   deleteOrder,
   updateOrderProgress,
+  getOrderByOrderId,
 } from "../controllers/order.controller.js";
 
 // (Optional) JWT middleware
@@ -14,11 +15,11 @@ import { protect } from "../middlewares/auth.middleware.js";
 const router = express.Router();
 
 
-router.post("/" ,createOrder);
+router.post("/" , protect, createOrder);
 
 router.get("/", protect, getOrders);
 
-// router.get("/by-order-id/:orderId", protect, getOrderByOrderId);
+router.get("/by-order-id/:orderId", protect, getOrderByOrderId);
 
 router.get("/:id", protect, getOrderById);
 

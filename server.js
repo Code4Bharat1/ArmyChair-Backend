@@ -10,6 +10,7 @@ import { apiLimiter, authLimiter } from "./middlewares/rateLimiter.js";
 import returnRoutes from "./routes/return.routes.js";
 import transferRoutes from "./routes/transfer.routes.js";
 import taskRoutes from "./routes/task.routes.js";
+import vendorRoutes from "./routes/vendor.routes.js";
 
 
 
@@ -49,6 +50,9 @@ app.use("/api/transfer", transferRoutes);
 app.use("/api/auth", authRoutes);
 
 app.use("/api/tasks", taskRoutes);
+
+app.use("/api/vendors", vendorRoutes);
+
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

@@ -1,64 +1,85 @@
 import Return from "../models/return.model.js";
 import Inventory from "../models/inventory.model.js";
+import Order from "../models/order.model.js";
 
 /**
  * CREATE RETURN ORDER
  * POST /api/returns
  */
+
+
 export const createReturn = async (req, res) => {
   try {
-    const {
-      orderId,
-      chairType,
-      description,
-      quantity,
-      returnDate,
-      category,
-      vendor,
-      location,
-    } = req.body;
+    const { orderId, returnDate, category, description } = req.body;
 
-    if (!orderId || !chairType || !returnDate || !category || !vendor) {
+    if (!orderId || !returnDate || !category) {
       return res.status(400).json({ message: "Required fields missing" });
     }
 
-    const exists = await Return.findOne({ orderId });
-    if (exists) {
-      return res.status(409).json({ message: "Return order already exists" });
+    // 1️⃣ Fetch order
+    const order = await Order.findOne({ orderId });
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
     }
 
+    // 2️⃣ Prevent duplicate returns
+    const exists = await Return.findOne({ orderId });
+    if (exists) {
+      return res.status(409).json({ message: "Return already exists" });
+    }
+
+    // 3️⃣ Create return from order
     const returnItem = await Return.create({
-      orderId,
-      chairType,
-      description,
-      quantity,
+      orderId: order.orderId,
+      chairType: order.chairModel,
+      quantity: order.quantity,
       returnDate,
+      deliveryDate: order.deliveryDate,
       category,
-      vendor,
-      location,
+      vendor: order.salesPerson?.name || "Unknown",
+      location: order.dispatchedTo,
+      returnedFrom: order.dispatchedTo,
+      description,
     });
 
     res.status(201).json({
-      message: "Return order added successfully",
+      message: "Return created from order",
       data: returnItem,
+    });
+  } catch (error) {
+    console.error("Create return error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+/* GET ALL RETURNS*/
+export const getAllReturns = async (req, res) => {
+  try {
+    const returns = await Return.find().sort({ createdAt: -1 });
+
+    const formatted = returns.map(r => ({
+      _id: r._id,
+      orderId: r.orderId,
+      chairType: r.chairType,
+      quantity: r.quantity,
+      returnedFrom: r.returnedFrom,   // Mansi
+      deliveryDate: r.deliveryDate,
+      returnDate: r.returnDate,
+      category: r.category,
+      movedToInventory: r.movedToInventory
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: formatted
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-/**
- * GET ALL RETURNS
- * GET /api/returns
- */
-export const getAllReturns = async (req, res) => {
-  try {
-    const returns = await Return.find().sort({ createdAt: -1 });
-    res.status(200).json({data:returns,});
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
 
 /**
  * MOVE RETURN TO INVENTORY
@@ -76,7 +97,6 @@ export const moveReturnToInventory = async (req, res) => {
       return res.status(400).json({ message: "Already moved to inventory" });
     }
 
-    // ✅ BLOCK non-functional items
     if (returnItem.category !== "Functional") {
       return res.status(400).json({
         message: "Only Functional items can be moved to inventory",
@@ -85,11 +105,10 @@ export const moveReturnToInventory = async (req, res) => {
 
     await Inventory.create({
       chairType: returnItem.chairType,
-      quantity: returnItem.quantity,
+      color: "Returned",
       vendor: returnItem.vendor,
-      location: returnItem.location,
-      type: "FULL",
-      priority: "high",
+      quantity: returnItem.quantity,
+      minQuantity: 1,
     });
 
     returnItem.movedToInventory = true;
@@ -98,7 +117,9 @@ export const moveReturnToInventory = async (req, res) => {
     res.status(200).json({
       message: "Moved to inventory successfully",
     });
+
   } catch (error) {
+    console.error("Move to inventory failed:", error);
     res.status(500).json({ message: error.message });
   }
 };

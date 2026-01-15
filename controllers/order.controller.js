@@ -1,5 +1,6 @@
 //order controller
 import Order from "../models/order.model.js";
+import { createVendor } from "./vendor.controller.js";
 
 export const createOrder = async (req, res) => {
   try {
@@ -36,8 +37,10 @@ export const createOrder = async (req, res) => {
       assignedSalesPerson = creatorId;
     }
 
-    const order = new Order({
-      dispatchedTo,
+    const vendor = await createVendor(dispatchedTo);
+
+    const order = await Order.create({
+      dispatchedTo: vendor._id,
       chairModel,
       orderDate,
       deliveryDate,
@@ -47,8 +50,6 @@ export const createOrder = async (req, res) => {
       salesPerson: assignedSalesPerson,
       progress: "ORDER_PLACED",
     });
-
-    await order.save();
 
     res.status(201).json({
       success: true,
@@ -62,10 +63,7 @@ export const createOrder = async (req, res) => {
       message: error.message,
     });
   }
-};
-
-
-
+};   // 👈 THIS WAS MISSING
 
 
 export const getOrders = async (req, res) => {
@@ -226,5 +224,32 @@ export const deleteOrder = async (req, res) => {
       success: false,
       message: "Failed to delete order",
     });
+  }
+};
+
+/* ================= GET ORDER BY ORDER ID ================= */
+export const getOrderByOrderId = async (req, res) => {
+  try {
+    const order = await Order.findOne({ orderId: req.params.orderId })
+      .populate("salesPerson", "name")
+      .populate("createdBy", "name");
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      order: {
+        orderId: order.orderId,
+        chairModel: order.chairModel,
+        quantity: order.quantity,
+        dispatchedTo: order.dispatchedTo,
+        salesPerson: order.salesPerson,
+      },
+    });
+  } catch (error) {
+    console.error("Fetch Order By Order ID Error:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };

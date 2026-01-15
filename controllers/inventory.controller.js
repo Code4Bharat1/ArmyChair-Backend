@@ -1,4 +1,5 @@
 import Inventory from "../models/inventory.model.js";
+import { createVendor } from "./vendor.controller.js";
 import mongoose from "mongoose";
 
 const getStockStatus = (qty, minQty) => {
@@ -17,11 +18,12 @@ export const createInventory = async (req, res) => {
 
       return res.status(400).json({ message: "All fields are required" });
     }
+    const vendorDoc = await createVendor(vendor);
 
     const inventory = await Inventory.create({
   chairType,
   color,
-  vendor,
+  vendor: vendorDoc._id,
   quantity: Number(quantity),
   minQuantity: Number(minQuantity),
 
@@ -75,15 +77,23 @@ export const updateInventory = async (req, res) => {
       updateData.chairType = req.body.chairType;
     }
     if (req.body.vendor !== undefined) {
+      const vendorDoc = await createVendor(req.body.vendor);
       updateData.vendor = req.body.vendor;
     }
 
     
     if (req.body.quantity !== undefined) {
-      const qty = Number(req.body.quantity);
-      updateData.quantity = qty;
-      updateData.priority = qty < 100 ? "low" : "high";
-    }
+  updateData.quantity = Number(req.body.quantity);
+}
+
+if (req.body.minQuantity !== undefined) {
+  updateData.minQuantity = Number(req.body.minQuantity);
+}
+
+if (req.body.color !== undefined) {
+  updateData.color = req.body.color;
+}
+
 
     const updatedInventory = await Inventory.findByIdAndUpdate(
       req.params.id,
@@ -97,7 +107,9 @@ export const updateInventory = async (req, res) => {
 
     res.status(200).json({
       message: "Inventory updated successfully",
-      inventory: updatedInventory,
+      inventory: {
+        ...updatedInventory.toObject(),
+         status: getStockStatus(updatedInventory.quantity, updatedInventory.minQuantity)},
     });
   } catch (error) {
     console.error("UPDATE INVENTORY ERROR:", error);
