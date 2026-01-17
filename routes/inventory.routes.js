@@ -1,5 +1,6 @@
 import express from "express";
-import { createInventory,getAllInventory, deleteInventory, updateInventory, createSpareParts ,getSpareParts, updateSparePart, deleteSparePart, checkInventoryForOrder} from "../controllers/inventory.controller.js";
+import { createInventory,getAllInventory, deleteInventory, updateInventory, createSpareParts
+     ,getSpareParts, updateSparePart, deleteSparePart, checkInventoryForOrder,getChairModels} from "../controllers/inventory.controller.js";
 import {protect} from "../middlewares/auth.middleware.js"
 
 const router = express.Router();
@@ -21,4 +22,7 @@ router.get(
   protect,
   checkInventoryForOrder
 );
+
+router.get("/chair-models", protect, getChairModels);
+
 export default router;

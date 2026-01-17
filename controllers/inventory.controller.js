@@ -49,13 +49,16 @@ export const createInventory = async (req, res) => {
 //  GET ALL INVENTORY
 export const getAllInventory = async (req, res) => {
   try {
-    const inventory = await Inventory.find({ type: "FULL" }).sort({
-      createdAt: -1,
-    });
+    const inventory = await Inventory.find({})
+      .populate("vendor", "name")
+      .sort({ createdAt: -1 });
 
     const data = inventory.map((i) => ({
       ...i.toObject(),
-      status: getStockStatus(i.quantity, i.minQuantity),
+      status:
+        i.type === "FULL"
+          ? getStockStatus(i.quantity, i.minQuantity)
+          : "RAW MATERIAL",
     }));
 
     res.status(200).json({
@@ -66,6 +69,7 @@ export const getAllInventory = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 //   UPDATE INVENTORY
 export const updateInventory = async (req, res) => {
@@ -339,5 +343,13 @@ export const checkInventoryForOrder = async (req, res) => {
   } catch (err) {
     console.error("Inventory check error:", err);
     res.status(500).json({ message: "Inventory check failed" });
+  }
+};
+export const getChairModels = async (req, res) => {
+  try {
+    const models = await Inventory.find({ type: "FULL" }).distinct("chairType");
+    res.json({ models });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 };

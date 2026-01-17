@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
 import Task from "../models/task.model.js";
-import User from "../models/user.model.js";
-
+import User from "../models/User.model.js";
 /* ================= SUPERADMIN ASSIGN TASK ================= */
 export const assignTask = async (req, res) => {
   try {
@@ -44,14 +43,16 @@ export const getMyTask = async (req, res) => {
     const userId = new mongoose.Types.ObjectId(req.user.id);
 
     const task = await Task.findOne({
-      assignedTo: userId
-    }).sort({ createdAt: -1 });   // get latest task
+      assignedTo: userId,
+      status: "Pending",
+    }).sort({ createdAt: -1 });
 
     res.json(task);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
+
 
 
 
@@ -85,6 +86,21 @@ export const getAllTasks = async (req, res) => {
     const tasks = await Task.find()
       .populate("assignedTo", "name email role")
       .populate("assignedBy", "name");
+
+    res.json(tasks);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+/* ================= EMPLOYEE TASK HISTORY ================= */
+export const getMyTaskHistory = async (req, res) => {
+  try {
+    const userId = new mongoose.Types.ObjectId(req.user.id);
+
+    const tasks = await Task.find({
+      assignedTo: userId,
+      status: "Completed",
+    }).sort({ completedAt: -1 });
 
     res.json(tasks);
   } catch (err) {

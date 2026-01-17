@@ -295,3 +295,59 @@ export const getOrderByOrderId = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+export const staffPerformanceAnalytics = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const match = {};
+
+    if (from && to) {
+      match.orderDate = { 
+        $gte: new Date(from), 
+        $lte: new Date(to) 
+      };
+    }
+
+    const data = await Order.aggregate([
+      { $match: match },
+      { 
+  $group: { 
+    _id: { $ifNull: ["$salesPerson", "$createdBy"] }, 
+    orders: { $sum: 1 }   // ← count orders, not chairs
+  } 
+},
+      { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "user" } },
+      { $unwind: "$user" },
+      { $project: { name: "$user.name", role: "$user.role", orders: 1, _id: 0 } },
+      { $sort: { orders: -1 } }
+    ]);
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+// GET /orders/analytics/products
+export const productAnalytics = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const match = {};
+
+    if (from && to) {
+      match.orderDate = { 
+        $gte: new Date(from), 
+        $lte: new Date(to) 
+      };
+    }
+
+    const data = await Order.aggregate([
+      { $match: match },
+      { $group: { _id: "$chairModel", orders: { $sum: 1 } } },   // count orders
+      { $project: { name: "$_id", orders: 1, _id: 0 } },
+      { $sort: { orders: -1 } }
+    ]);
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
