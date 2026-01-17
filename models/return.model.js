@@ -34,10 +34,10 @@ const returnSchema = new mongoose.Schema(
       required: true,
     },
 
-    movedToInventory: {
-      type: Boolean,
-      default: false,
-    },
+    // movedToInventory: {
+    //   type: Boolean,
+    //   default: false,
+    // },
 
     vendor: {
       type: String,
@@ -50,6 +50,20 @@ const returnSchema = new mongoose.Schema(
     returnedFrom: {
   type: String,
   required: true,
+},
+status: {
+  type: String,
+  enum: ["Pending", "In-Fitting", "Accepted", "Rejected"],
+  default: "Pending",
+},
+fittingDecision: {
+  type: String,
+  enum: ["Accepted", "Rejected"],
+  default: null,
+},
+fittingRemarks: {
+  type: String,
+  default: "",
 },
 
 deliveryDate: {

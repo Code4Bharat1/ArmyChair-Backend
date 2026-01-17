@@ -1,11 +1,37 @@
 import Order from "../models/order.model.js";
 import Inventory from "../models/inventory.model.js";
+import ProductionInward from "../models/productionInward.model.js";
 import mongoose from "mongoose";
+import Vendor from "../models/vendor.model.js";
+export const getPendingProductionInward = async (req, res) => {
+  try {
+    const data = await ProductionInward.find({
+      status: "PENDING",
+      assignedTo: req.user.id, // 🔥 VERY IMPORTANT
+    })
+      .populate("createdBy", "name") // 🔥 REQUIRED FOR UI
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data,
+    });
+  } catch (err) {
+    console.error("Pending inward error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
 export const getOrderPickData = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order)
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
 
     const spareStock = await Inventory.find({ type: "SPARE" });
 
@@ -16,7 +42,7 @@ export const getOrderPickData = async (req, res) => {
       if (!grouped[item.chairType]) grouped[item.chairType] = [];
 
       grouped[item.chairType].push({
-        inventoryId: item._id,
+        inventoryId: item.id,
         location: item.location,
         available: item.quantity,
       });
@@ -54,9 +80,10 @@ export const dispatchOrderParts = async (req, res) => {
     const order = await Order.findById(orderId).session(session);
     if (!order) throw new Error("Order not found");
 
-    if (order.progress !== "ORDER_PLACED") {
-      throw new Error("Order already processed by warehouse");
-    }
+    if (!["ORDER_PLACED", "PARTIAL"].includes(order.progress)) {
+  throw new Error("Order already processed by warehouse");
+}
+
 
     for (const item of items) {
       const stock = await Inventory.findById(item.inventoryId).session(session);
@@ -90,3 +117,144 @@ export const dispatchOrderParts = async (req, res) => {
     res.status(400).json({ success: false, message: err.message });
   }
 };
+
+export const acceptProductionInward = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const inward = await ProductionInward.findById(req.params.id).session(session);
+
+    if (!inward || inward.status !== "PENDING") {
+      throw new Error("Invalid or already processed inward");
+    }
+
+    if (String(inward.assignedTo) !== String(req.user.id)) {
+      throw new Error("You are not assigned to this inward");
+    }
+
+    /* ================= SYSTEM VENDOR ================= */
+    let vendor = await Vendor.findOne({ name: "Production" }).session(session);
+    if (!vendor) {
+      vendor = await Vendor.create(
+        [{ name: "Production" }],
+        { session }
+      );
+    }
+
+    /* ================= ADD / MERGE SPARE INVENTORY ================= */
+    await Inventory.findOneAndUpdate(
+  {
+    chairType: inward.partName,
+    location: inward.location || "A",
+    type: "SPARE",
+  },
+  {
+    $inc: { quantity: inward.quantity },
+    $setOnInsert: {
+      createdBy: inward.createdBy,     // ✅ production USER
+      createdByRole: "production",     // ✅ role
+      priority: "high",
+    },
+  },
+  { upsert: true }
+);
+
+
+    /* ================= UPDATE INWARD ================= */
+    inward.status = "ACCEPTED";
+    inward.approvedBy = req.user.id;
+    await inward.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.json({
+      success: true,
+      message: "Inventory added successfully",
+    });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+export const getOrderInventoryPreview = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    // Bill of Materials for the chair
+    const bom = await ChairBOM.findOne({ chairModel: order.chairModel });
+    if (!bom) {
+      return res.status(404).json({
+        message: "BOM not defined for this chair model",
+      });
+    }
+
+    const preview = [];
+
+    for (const part of bom.parts) {
+      const inventories = await Inventory.find({
+        partName: part.partName,
+      });
+
+      const totalAvailable = inventories.reduce(
+        (sum, i) => sum + i.quantity,
+        0
+      );
+
+      preview.push({
+        partName: part.partName,
+        requiredPerChair: part.qtyPerChair,
+        requiredTotal: part.qtyPerChair * order.quantity,
+        totalAvailable,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      orderId: order.orderId,
+      chairModel: order.chairModel,
+      quantity: order.quantity,
+      parts: preview,
+    });
+  } catch (error) {
+    console.error("INVENTORY PREVIEW ERROR:", error);
+    res.status(500).json({ message: "Failed to load inventory preview" });
+  }
+};
+export const partialAcceptOrder = async (req, res) => {
+  try {
+    const { orderId, buildable, items } = req.body;
+
+    if (!orderId || !items?.length)
+      throw new Error("Invalid partial data");
+
+    const order = await Order.findById(orderId);
+    if (!order) throw new Error("Order not found");
+
+    // 🔥 DO NOT TOUCH INVENTORY HERE
+
+    order.partialAccepted = true;
+    order.partialBuildableQty = buildable;
+    order.partialParts = items;
+    order.progress = "PARTIAL";
+
+    await order.save();
+
+    res.json({ success: true, message: "Partial saved successfully" });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+

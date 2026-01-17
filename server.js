@@ -11,6 +11,8 @@ import returnRoutes from "./routes/return.routes.js";
 import transferRoutes from "./routes/transfer.routes.js";
 import taskRoutes from "./routes/task.routes.js";
 import vendorRoutes from "./routes/vendor.routes.js";
+import productionRoutes from "./routes/production.routes.js";
+
 
 
 
@@ -52,6 +54,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/tasks", taskRoutes);
 
 app.use("/api/vendors", vendorRoutes);
+app.use("/api/production", productionRoutes);
+
 
 
 app.listen(PORT, () => {

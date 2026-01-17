@@ -29,7 +29,10 @@ export const createReturn = async (req, res) => {
       return res.status(409).json({ message: "Return already exists" });
     }
 
-    // 3️⃣ Create return from order
+    // 🔍 HARD LOG (important)
+    console.log("ORDER DISPATCHED TO:", order.dispatchedTo);
+
+    // 3️⃣ Create return
     const returnItem = await Return.create({
       orderId: order.orderId,
       chairType: order.chairModel,
@@ -39,7 +42,7 @@ export const createReturn = async (req, res) => {
       category,
       vendor: order.salesPerson?.name || "Unknown",
       location: order.dispatchedTo,
-      returnedFrom: order.dispatchedTo,
+      returnedFrom: order.dispatchedTo || "Unknown", // ✅ ABSOLUTE FIX
       description,
     });
 
@@ -47,11 +50,13 @@ export const createReturn = async (req, res) => {
       message: "Return created from order",
       data: returnItem,
     });
+
   } catch (error) {
     console.error("Create return error:", error);
     res.status(500).json({ message: error.message });
   }
 };
+
 
 
 /* GET ALL RETURNS*/
@@ -85,7 +90,46 @@ export const getAllReturns = async (req, res) => {
  * MOVE RETURN TO INVENTORY
  * POST /api/returns/:id/move-to-inventory
  */
-export const moveReturnToInventory = async (req, res) => {
+// export const moveReturnToInventory = async (req, res) => {
+//   try {
+//     const returnItem = await Return.findById(req.params.id);
+
+//     if (!returnItem) {
+//       return res.status(404).json({ message: "Return item not found" });
+//     }
+
+//     if (returnItem.movedToInventory) {
+//       return res.status(400).json({ message: "Already moved to inventory" });
+//     }
+
+//     if (returnItem.category !== "Functional") {
+//       return res.status(400).json({
+//         message: "Only Functional items can be moved to inventory",
+//       });
+//     }
+
+//     await Inventory.create({
+//       chairType: returnItem.chairType,
+//       color: "Returned",
+//       vendor: returnItem.vendor,
+//       quantity: returnItem.quantity,
+//       minQuantity: 1,
+//     });
+
+//     returnItem.movedToInventory = true;
+//     await returnItem.save();
+
+//     res.status(200).json({
+//       message: "Moved to inventory successfully",
+//     });
+
+//   } catch (error) {
+//     console.error("Move to inventory failed:", error);
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+
+export const moveReturnToFitting = async (req, res) => {
   try {
     const returnItem = await Return.findById(req.params.id);
 
@@ -93,34 +137,27 @@ export const moveReturnToInventory = async (req, res) => {
       return res.status(404).json({ message: "Return item not found" });
     }
 
-    if (returnItem.movedToInventory) {
-      return res.status(400).json({ message: "Already moved to inventory" });
+    if (returnItem.status !== "Pending") {
+      return res.status(400).json({
+        message: "Return is already processed",
+      });
     }
 
     if (returnItem.category !== "Functional") {
       return res.status(400).json({
-        message: "Only Functional items can be moved to inventory",
+        message: "Only Functional items can be sent to fitting",
       });
     }
 
-    await Inventory.create({
-      chairType: returnItem.chairType,
-      color: "Returned",
-      vendor: returnItem.vendor,
-      quantity: returnItem.quantity,
-      minQuantity: 1,
-    });
-
-    returnItem.movedToInventory = true;
+    returnItem.status = "In-Fitting";
     await returnItem.save();
 
     res.status(200).json({
-      message: "Moved to inventory successfully",
+      message: "Return moved to fitting successfully",
     });
 
   } catch (error) {
-    console.error("Move to inventory failed:", error);
+    console.error("Move to fitting error:", error);
     res.status(500).json({ message: error.message });
   }
 };
-

@@ -1,4 +1,5 @@
 import Inventory from "../models/inventory.model.js";
+import Order from "../models/order.model.js";
 import { createVendor } from "./vendor.controller.js";
 import mongoose from "mongoose";
 
@@ -9,27 +10,32 @@ const getStockStatus = (qty, minQty) => {
   return "Healthy";
 };
 
- //  CREATE INVENTORY ITEM
+//  CREATE INVENTORY ITEM
 export const createInventory = async (req, res) => {
   try {
-    const { chairType, color, vendor, quantity, minQuantity} = req.body || {};
+    const { chairType, color, vendor, quantity, minQuantity } = req.body || {};
 
-    if (!chairType || !color || !vendor || quantity === undefined || minQuantity === undefined) {
-
+    if (
+      !chairType ||
+      !color ||
+      !vendor ||
+      quantity === undefined ||
+      minQuantity === undefined
+    ) {
       return res.status(400).json({ message: "All fields are required" });
     }
     const vendorDoc = await createVendor(vendor);
 
     const inventory = await Inventory.create({
-  chairType,
-  color,
-  vendor: vendorDoc._id,
-  quantity: Number(quantity),
-  minQuantity: Number(minQuantity),
+      chairType,
+      color,
+      vendor: vendorDoc._id,
+      quantity: Number(quantity),
+      minQuantity: Number(minQuantity),
 
-  createdBy: req.user ? req.user.id : null,
-  createdByRole: req.user ? req.user.role : null,
-});
+      createdBy: req.user ? req.user.id : null,
+      createdByRole: req.user ? req.user.role : null,
+    });
 
     res.status(201).json({
       message: "Inventory item added successfully",
@@ -40,10 +46,12 @@ export const createInventory = async (req, res) => {
   }
 };
 
- //  GET ALL INVENTORY
+//  GET ALL INVENTORY
 export const getAllInventory = async (req, res) => {
   try {
-    const inventory = await Inventory.find({ type: "FULL" }).sort({ createdAt: -1 });
+    const inventory = await Inventory.find({ type: "FULL" }).sort({
+      createdAt: -1,
+    });
 
     const data = inventory.map((i) => ({
       ...i.toObject(),
@@ -58,7 +66,6 @@ export const getAllInventory = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 
 //   UPDATE INVENTORY
 export const updateInventory = async (req, res) => {
@@ -81,19 +88,17 @@ export const updateInventory = async (req, res) => {
       updateData.vendor = req.body.vendor;
     }
 
-    
     if (req.body.quantity !== undefined) {
-  updateData.quantity = Number(req.body.quantity);
-}
+      updateData.quantity = Number(req.body.quantity);
+    }
 
-if (req.body.minQuantity !== undefined) {
-  updateData.minQuantity = Number(req.body.minQuantity);
-}
+    if (req.body.minQuantity !== undefined) {
+      updateData.minQuantity = Number(req.body.minQuantity);
+    }
 
-if (req.body.color !== undefined) {
-  updateData.color = req.body.color;
-}
-
+    if (req.body.color !== undefined) {
+      updateData.color = req.body.color;
+    }
 
     const updatedInventory = await Inventory.findByIdAndUpdate(
       req.params.id,
@@ -109,7 +114,11 @@ if (req.body.color !== undefined) {
       message: "Inventory updated successfully",
       inventory: {
         ...updatedInventory.toObject(),
-         status: getStockStatus(updatedInventory.quantity, updatedInventory.minQuantity)},
+        status: getStockStatus(
+          updatedInventory.quantity,
+          updatedInventory.minQuantity
+        ),
+      },
     });
   } catch (error) {
     console.error("UPDATE INVENTORY ERROR:", error);
@@ -144,37 +153,45 @@ export const deleteInventory = async (req, res) => {
   }
 };
 
-
 //Spare Parts Inventory
 
 export const createSpareParts = async (req, res) => {
   try {
-    const { chairType, vendor, quantity, location } = req.body;
+    const { chairType, quantity, location } = req.body;
 
-    /* ===== VALIDATION ===== */
-    if (
-      !chairType ||
-      !vendor ||
-      quantity === undefined ||
-      quantity === null ||
-      !location
-    ) {
+    if (!chairType || quantity == null || !location) {
       return res.status(400).json({
         success: false,
-        message: "chairType, vendor, quantity and location are required",
+        message: "chairType, quantity and location are required",
       });
     }
 
-    /* ===== CREATE ===== */
-    const sparePart = await Inventory.create({
-      chairType,
-      vendor,
-      quantity,
-      location,        // 👈 extra field for spare parts
-      type: "SPARE",   // ✅ optional: to distinguish from full chair
-    });
+    const qty = Number(quantity);
 
-    return res.status(201).json({
+    // ✅ UPSERT: update if exists, else create
+    const sparePart = await Inventory.findOneAndUpdate(
+      {
+        chairType,
+        location,
+        type: "SPARE",
+      },
+      {
+        $inc: { quantity: qty },
+        $setOnInsert: {
+          chairType,
+          location,
+          type: "SPARE",
+          createdBy: req.user ? req.user.id : null,
+          createdByRole: req.user ? req.user.role : null,
+        },
+      },
+      {
+        new: true,
+        upsert: true,
+      }
+    );
+
+    res.status(201).json({
       success: true,
       message: "Spare part added successfully",
       data: sparePart,
@@ -183,7 +200,7 @@ export const createSpareParts = async (req, res) => {
     console.error("Create spare part error:", error);
     res.status(500).json({
       success: false,
-      message: error.message || "Server error",
+      message: error.message,
     });
   }
 };
@@ -191,10 +208,11 @@ export const createSpareParts = async (req, res) => {
 //get all spare parts
 export const getSpareParts = async (req, res) => {
   try {
-    const parts = await Inventory.find({ type: "SPARE" }).sort({ createdAt: -1 });
+    const parts = await Inventory.find({ type: "SPARE" })
+      .populate("createdBy", "name role")
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
-      count: parts.length,
       success: true,
       inventory: parts,
     });
@@ -209,24 +227,20 @@ export const updateSparePart = async (req, res) => {
     const { id } = req.params;
     const { chairType, vendor, location, quantity } = req.body;
 
-    if (
-      !chairType ||
-      !vendor ||
-      !location ||
-      quantity === undefined ||
-      quantity === null
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "All fields are required",
-      });
-    }
+  if (!chairType || !location || quantity === undefined || quantity === null) {
+  return res.status(400).json({
+    success: false,
+    message: "chairType, location and quantity are required",
+  });
+}
 
-    const updated = await Inventory.findOneAndUpdate(
-      { _id: id, type: "SPARE" },
-      { chairType, vendor, location, quantity },
-      { new: true }
-    );
+
+   const updated = await Inventory.findOneAndUpdate(
+  { _id: id, type: "SPARE" },
+  { chairType, location, quantity },     // ❌ remove vendor here
+  { new: true }
+);
+
 
     if (!updated) {
       return res.status(404).json({
@@ -270,5 +284,60 @@ export const deleteSparePart = async (req, res) => {
   } catch (error) {
     console.error("Delete spare part error:", error);
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const checkInventoryForOrder = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    // Fetch all SPARE PARTS for this chair model
+    const parts = await Inventory.find({
+      chairType: order.chairModel,
+      type: "SPARE",
+    });
+
+    if (parts.length === 0) {
+      return res.json({
+        chairModel: order.chairModel,
+        requiredQuantity: order.quantity,
+        totalAvailable: 0,
+        parts: [],
+      });
+    }
+
+    // Group by partName
+    const grouped = {};
+    parts.forEach((p) => {
+      if (!grouped[p.partName]) {
+        grouped[p.partName] = 0;
+      }
+      grouped[p.partName] += p.quantity;
+    });
+
+    // Convert to array
+    const partList = Object.entries(grouped).map(
+      ([partName, available]) => ({
+        partName,
+        available,
+      })
+    );
+
+    // Minimum decides how many chairs can be built
+    const totalAvailable = Math.min(
+      ...partList.map((p) => p.available)
+    );
+
+    res.json({
+      chairModel: order.chairModel,
+      requiredQuantity: order.quantity,
+      totalAvailable,
+      parts: partList,
+    });
+  } catch (err) {
+    console.error("Inventory check error:", err);
+    res.status(500).json({ message: "Inventory check failed" });
   }
 };

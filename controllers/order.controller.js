@@ -1,7 +1,7 @@
-//order controller
 import Order from "../models/order.model.js";
 import { createVendor } from "./vendor.controller.js";
 
+/* ================= CREATE ORDER ================= */
 export const createOrder = async (req, res) => {
   try {
     const {
@@ -10,11 +10,16 @@ export const createOrder = async (req, res) => {
       orderDate,
       deliveryDate,
       quantity,
-      isPartial,
-      salesPerson, // 👈 admin will send this
+      salesPerson,
     } = req.body;
 
-    if (!dispatchedTo || !chairModel || !orderDate || !deliveryDate || !quantity) {
+    if (
+      !dispatchedTo ||
+      !chairModel ||
+      !orderDate ||
+      !deliveryDate ||
+      !quantity
+    ) {
       return res.status(400).json({
         success: false,
         message: "All fields are required",
@@ -33,7 +38,6 @@ export const createOrder = async (req, res) => {
       }
       assignedSalesPerson = salesPerson;
     } else {
-      // sales creates order for self
       assignedSalesPerson = creatorId;
     }
 
@@ -45,7 +49,7 @@ export const createOrder = async (req, res) => {
       orderDate,
       deliveryDate,
       quantity: Number(quantity),
-      isPartial: Boolean(isPartial),
+      isPartial: false,
       createdBy: creatorId,
       salesPerson: assignedSalesPerson,
       progress: "ORDER_PLACED",
@@ -63,9 +67,9 @@ export const createOrder = async (req, res) => {
       message: error.message,
     });
   }
-};   // 👈 THIS WAS MISSING
+};
 
-
+/* ================= GET ORDERS ================= */
 export const getOrders = async (req, res) => {
   try {
     const filter = {};
@@ -76,14 +80,11 @@ export const getOrders = async (req, res) => {
       filter.salesPerson = userId;
     }
 
-    if (role === "warehouse") {
-      filter.isPartial = false;
-    }
-
-    // admin → no filter
+    // ❗ warehouse CAN see partial orders (no filter applied)
 
     const orders = await Order.find(filter)
       .sort({ createdAt: -1 })
+      .populate("dispatchedTo", "name")
       .populate("createdBy", "name email")
       .populate("salesPerson", "name email");
 
@@ -100,10 +101,10 @@ export const getOrders = async (req, res) => {
 /* ================= GET SINGLE ORDER ================= */
 export const getOrderById = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id).populate(
-      "createdBy",
-      "name email"
-    );
+    const order = await Order.findById(req.params.id)
+      .populate("dispatchedTo", "name")
+      .populate("createdBy", "name email")
+      .populate("salesPerson", "name email");
 
     if (!order) {
       return res.status(404).json({
@@ -127,13 +128,29 @@ export const getOrderById = async (req, res) => {
 /* ================= UPDATE ORDER (SALES EDIT) ================= */
 export const updateOrder = async (req, res) => {
   try {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    // 🔒 lock after warehouse processing
+    if (order.progress !== "ORDER_PLACED") {
+      return res.status(403).json({
+        success: false,
+        message: "Order cannot be edited after warehouse processing",
+      });
+    }
+
     const allowedUpdates = [
       "dispatchedTo",
       "chairModel",
       "orderDate",
       "deliveryDate",
       "quantity",
-      "isPartial",
     ];
 
     const updates = {};
@@ -151,13 +168,6 @@ export const updateOrder = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    if (!updatedOrder) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
-    }
-
     res.status(200).json({
       success: true,
       message: "Order updated successfully",
@@ -171,9 +181,11 @@ export const updateOrder = async (req, res) => {
   }
 };
 
+/* ================= UPDATE ORDER PROGRESS ================= */
 export const updateOrderProgress = async (req, res) => {
   try {
     const { progress } = req.body;
+    const role = req.user.role;
 
     const allowed = [
       "ORDER_PLACED",
@@ -182,26 +194,55 @@ export const updateOrderProgress = async (req, res) => {
       "FITTING_COMPLETED",
       "READY_FOR_DISPATCH",
       "DISPATCHED",
+      "PARTIAL",
     ];
 
     if (!allowed.includes(progress)) {
       return res.status(400).json({ message: "Invalid progress" });
     }
 
+    // 🔐 SALES RULES
+    if (role === "sales" && progress !== "DISPATCHED") {
+      return res.status(403).json({
+        message: "Sales can only dispatch orders",
+      });
+    }
+
+    // 🔐 WAREHOUSE RULES
+    if (role === "warehouse") {
+      const allowedWarehouse = [
+        "WAREHOUSE_COLLECTED",
+        "FITTING_IN_PROGRESS",
+        "FITTING_COMPLETED",
+        "READY_FOR_DISPATCH",
+        "PARTIAL",
+      ];
+
+      if (!allowedWarehouse.includes(progress)) {
+        return res.status(403).json({
+          message: "Invalid warehouse action",
+        });
+      }
+    }
+
     const order = await Order.findByIdAndUpdate(
       req.params.id,
-      { progress },
+      {
+        progress,
+        isPartial: progress === "PARTIAL",
+      },
       { new: true }
     );
 
-    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
 
     res.status(200).json({ success: true, order });
   } catch (error) {
     res.status(500).json({ message: "Status update failed" });
   }
 };
-
 
 /* ================= DELETE ORDER ================= */
 export const deleteOrder = async (req, res) => {
@@ -231,6 +272,7 @@ export const deleteOrder = async (req, res) => {
 export const getOrderByOrderId = async (req, res) => {
   try {
     const order = await Order.findOne({ orderId: req.params.orderId })
+      .populate("dispatchedTo", "name")
       .populate("salesPerson", "name")
       .populate("createdBy", "name");
 

@@ -9,11 +9,10 @@ const orderSchema = new mongoose.Schema(
     },
 
     dispatchedTo: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "Vendor",
-  required: true
-},
-
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Vendor",
+      required: true,
+    },
 
     chairModel: {
       type: String,
@@ -51,23 +50,39 @@ const orderSchema = new mongoose.Schema(
         "FITTING_COMPLETED",
         "READY_FOR_DISPATCH",
         "DISPATCHED",
+        "PARTIAL", // ✅ REQUIRED ADDITION
       ],
       default: "ORDER_PLACED",
     },
 
-    // 👇 WHO CREATED THE ORDER (ADMIN / SALES)
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
 
-    // 👇 WHO OWNS THE ORDER (SALES PERSON)
     salesPerson: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
+    partialAccepted: {
+  type: Boolean,
+  default: false,
+},
+
+partialBuildableQty: {
+  type: Number,
+  default: 0,
+},
+
+partialParts: [
+  {
+    inventoryId: { type: mongoose.Schema.Types.ObjectId, ref: "Inventory" },
+    qty: Number,
+  },
+],
+
   },
   { timestamps: true }
 );
