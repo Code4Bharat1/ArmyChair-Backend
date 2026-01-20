@@ -170,3 +170,30 @@ export const getMe = async (req, res) => {
     });
   }
 };
+export const changePassword = async (req, res) => {
+  try {
+    const { password } = req.body;
+
+    if (!password || password.length < 6) {
+      return res.status(400).json({
+        message: "Password must be at least 6 characters",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await User.updateOne(
+      { _id: req.user.id },
+      { $set: { password: hashedPassword } }
+    );
+
+    return res.status(200).json({
+      message: "Password updated successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
