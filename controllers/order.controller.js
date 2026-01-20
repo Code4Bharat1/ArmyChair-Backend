@@ -1,5 +1,6 @@
 import Order from "../models/order.model.js";
 import { createVendor } from "./vendor.controller.js";
+import { logActivity } from "../utils/logActivity.js";
 
 /* ================= CREATE ORDER ================= */
 export const createOrder = async (req, res) => {
@@ -11,6 +12,7 @@ export const createOrder = async (req, res) => {
       deliveryDate,
       quantity,
       salesPerson,
+      orderType = "FULL",
     } = req.body;
 
     if (
@@ -46,6 +48,7 @@ export const createOrder = async (req, res) => {
     const order = await Order.create({
       dispatchedTo: vendor._id,
       chairModel,
+      orderType,
       orderDate,
       deliveryDate,
       quantity: Number(quantity),
@@ -53,6 +56,14 @@ export const createOrder = async (req, res) => {
       createdBy: creatorId,
       salesPerson: assignedSalesPerson,
       progress: "ORDER_PLACED",
+    });
+    await logActivity(req, {
+      action: "CREATE_ORDER",
+      module: "Order",
+      entityType: "Order",
+      entityId: order._id,
+      description: `Created order ${order.orderId} for ${chairModel} qty ${quantity}`,
+      assignedBy: req.user.name,
     });
 
     res.status(201).json({
@@ -84,7 +95,12 @@ export const getOrders = async (req, res) => {
 
     const orders = await Order.find(filter)
       .sort({ createdAt: -1 })
-      .populate("dispatchedTo", "name")
+      .populate({
+  path: "dispatchedTo",
+  select: "name",
+  options: { strictPopulate: false }
+})
+
       .populate("createdBy", "name email")
       .populate("salesPerson", "name email");
 
@@ -162,11 +178,17 @@ export const updateOrder = async (req, res) => {
       }
     }
 
-    const updatedOrder = await Order.findByIdAndUpdate(
-      req.params.id,
-      updates,
-      { new: true, runValidators: true }
-    );
+    const updatedOrder = await Order.findByIdAndUpdate(req.params.id, updates, {
+      new: true,
+      runValidators: true,
+    });
+    await logActivity(req, {
+      action: "ORDER_STATUS_UPDATE",
+      module: "Order",
+      entityType: "Order",
+      entityId: order._id,
+      description: `Order ${order.orderId} moved to ${progress}`,
+    });
 
     res.status(200).json({
       success: true,
@@ -231,7 +253,7 @@ export const updateOrderProgress = async (req, res) => {
         progress,
         isPartial: progress === "PARTIAL",
       },
-      { new: true }
+      { new: true },
     );
 
     if (!order) {
@@ -255,6 +277,13 @@ export const deleteOrder = async (req, res) => {
         message: "Order not found",
       });
     }
+    await logActivity(req, {
+      action: "ORDER_DELETE",
+      module: "Order",
+      entityType: "Order",
+      entityId: deletedOrder._id,
+      description: `Deleted order ${deletedOrder.orderId}`,
+    });
 
     res.status(200).json({
       success: true,
@@ -301,24 +330,33 @@ export const staffPerformanceAnalytics = async (req, res) => {
     const match = {};
 
     if (from && to) {
-      match.orderDate = { 
-        $gte: new Date(from), 
-        $lte: new Date(to) 
+      match.orderDate = {
+        $gte: new Date(from),
+        $lte: new Date(to),
       };
     }
 
     const data = await Order.aggregate([
       { $match: match },
-      { 
-  $group: { 
-    _id: { $ifNull: ["$salesPerson", "$createdBy"] }, 
-    orders: { $sum: 1 }   // ← count orders, not chairs
-  } 
-},
-      { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "user" } },
+      {
+        $group: {
+          _id: { $ifNull: ["$salesPerson", "$createdBy"] },
+          orders: { $sum: 1 }, // ← count orders, not chairs
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "user",
+        },
+      },
       { $unwind: "$user" },
-      { $project: { name: "$user.name", role: "$user.role", orders: 1, _id: 0 } },
-      { $sort: { orders: -1 } }
+      {
+        $project: { name: "$user.name", role: "$user.role", orders: 1, _id: 0 },
+      },
+      { $sort: { orders: -1 } },
     ]);
 
     res.json(data);
@@ -333,17 +371,17 @@ export const productAnalytics = async (req, res) => {
     const match = {};
 
     if (from && to) {
-      match.orderDate = { 
-        $gte: new Date(from), 
-        $lte: new Date(to) 
+      match.orderDate = {
+        $gte: new Date(from),
+        $lte: new Date(to),
       };
     }
 
     const data = await Order.aggregate([
       { $match: match },
-      { $group: { _id: "$chairModel", orders: { $sum: 1 } } },   // count orders
+      { $group: { _id: "$chairModel", orders: { $sum: 1 } } }, // count orders
       { $project: { name: "$_id", orders: 1, _id: 0 } },
-      { $sort: { orders: -1 } }
+      { $sort: { orders: -1 } },
     ]);
 
     res.json(data);

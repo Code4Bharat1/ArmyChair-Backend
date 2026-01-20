@@ -19,6 +19,11 @@ const orderSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+orderType: {
+  type: String,
+  enum: ["FULL", "SPARE"],
+  default: "FULL",
+},
 
     orderDate: {
       type: Date,

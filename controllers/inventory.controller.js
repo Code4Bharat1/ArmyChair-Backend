@@ -2,6 +2,7 @@ import Inventory from "../models/inventory.model.js";
 import Order from "../models/order.model.js";
 import { createVendor } from "./vendor.controller.js";
 import mongoose from "mongoose";
+import { logActivity } from "../utils/logActivity.js";
 
 const getStockStatus = (qty, minQty) => {
   if (qty === 0) return "Critical";
@@ -13,17 +14,19 @@ const getStockStatus = (qty, minQty) => {
 //  CREATE INVENTORY ITEM
 export const createInventory = async (req, res) => {
   try {
-    const { chairType, color, vendor, quantity, minQuantity } = req.body || {};
+    const { chairType, color, vendor, quantity, minQuantity, location } = req.body || {};
 
     if (
       !chairType ||
       !color ||
       !vendor ||
       quantity === undefined ||
-      minQuantity === undefined
+      minQuantity === undefined ||
+      !location
     ) {
       return res.status(400).json({ message: "All fields are required" });
     }
+
     const vendorDoc = await createVendor(vendor);
 
     const inventory = await Inventory.create({
@@ -32,9 +35,10 @@ export const createInventory = async (req, res) => {
       vendor: vendorDoc._id,
       quantity: Number(quantity),
       minQuantity: Number(minQuantity),
-
-      createdBy: req.user ? req.user.id : null,
-      createdByRole: req.user ? req.user.role : null,
+      location,
+      type: "FULL", // 🔥🔥🔥 THIS IS THE FIX
+      createdBy: req.user?.id,
+      createdByRole: req.user?.role,
     });
 
     res.status(201).json({
@@ -42,9 +46,11 @@ export const createInventory = async (req, res) => {
       inventory,
     });
   } catch (error) {
+    console.error("CREATE FULL INVENTORY ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
+
 
 //  GET ALL INVENTORY
 export const getAllInventory = async (req, res) => {
@@ -70,7 +76,6 @@ export const getAllInventory = async (req, res) => {
   }
 };
 
-
 //   UPDATE INVENTORY
 export const updateInventory = async (req, res) => {
   try {
@@ -88,9 +93,10 @@ export const updateInventory = async (req, res) => {
       updateData.chairType = req.body.chairType;
     }
     if (req.body.vendor !== undefined) {
-      const vendorDoc = await createVendor(req.body.vendor);
-      updateData.vendor = req.body.vendor;
-    }
+  const vendorDoc = await createVendor(req.body.vendor);
+  updateData.vendor = vendorDoc._id; // ✅ FIXED
+}
+
 
     if (req.body.quantity !== undefined) {
       updateData.quantity = Number(req.body.quantity);
@@ -107,12 +113,19 @@ export const updateInventory = async (req, res) => {
     const updatedInventory = await Inventory.findByIdAndUpdate(
       req.params.id,
       updateData,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
     if (!updatedInventory) {
       return res.status(404).json({ message: "Inventory not found" });
     }
+    await logActivity(req, {
+      action: "INVENTORY_UPDATE",
+      module: "Inventory",
+      entityType: "Inventory",
+      entityId: updatedInventory._id,
+      description: `Updated inventory ${updatedInventory.chairType}`,
+    });
 
     res.status(200).json({
       message: "Inventory updated successfully",
@@ -120,7 +133,7 @@ export const updateInventory = async (req, res) => {
         ...updatedInventory.toObject(),
         status: getStockStatus(
           updatedInventory.quantity,
-          updatedInventory.minQuantity
+          updatedInventory.minQuantity,
         ),
       },
     });
@@ -146,6 +159,13 @@ export const deleteInventory = async (req, res) => {
     if (!inventory) {
       return res.status(404).json({ message: "Inventory not found" });
     }
+    await logActivity(req, {
+      action: "INVENTORY_DELETE",
+      module: "Inventory",
+      entityType: "Inventory",
+      entityId: inventory._id,
+      description: `Deleted inventory ${inventory.chairType}`,
+    });
 
     res.status(200).json({
       message: "Inventory deleted successfully",
@@ -161,38 +181,33 @@ export const deleteInventory = async (req, res) => {
 
 export const createSpareParts = async (req, res) => {
   try {
-    const { chairType, quantity, location } = req.body;
+    const { partName, quantity, location } = req.body;
 
-    if (!chairType || quantity == null || !location) {
+    if (!partName || quantity == null || !location) {
       return res.status(400).json({
-        success: false,
-        message: "chairType, quantity and location are required",
+        message: "partName, quantity and location are required",
       });
     }
 
     const qty = Number(quantity);
 
-    // ✅ UPSERT: update if exists, else create
     const sparePart = await Inventory.findOneAndUpdate(
       {
-        chairType,
+        partName,
         location,
         type: "SPARE",
       },
       {
         $inc: { quantity: qty },
         $setOnInsert: {
-          chairType,
+          partName,
           location,
           type: "SPARE",
-          createdBy: req.user ? req.user.id : null,
-          createdByRole: req.user ? req.user.role : null,
+          createdBy: req.user?.id,
+          createdByRole: req.user?.role,
         },
       },
-      {
-        new: true,
-        upsert: true,
-      }
+      { new: true, upsert: true }
     );
 
     res.status(201).json({
@@ -202,10 +217,7 @@ export const createSpareParts = async (req, res) => {
     });
   } catch (error) {
     console.error("Create spare part error:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -228,29 +240,26 @@ export const getSpareParts = async (req, res) => {
 // Update
 export const updateSparePart = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { chairType, vendor, location, quantity } = req.body;
+    const { partName, location, quantity } = req.body;
 
-  if (!chairType || !location || quantity === undefined || quantity === null) {
-  return res.status(400).json({
-    success: false,
-    message: "chairType, location and quantity are required",
-  });
-}
+    if (!partName || !location || quantity == null) {
+      return res.status(400).json({
+        message: "partName, location and quantity are required",
+      });
+    }
 
-
-   const updated = await Inventory.findOneAndUpdate(
-  { _id: id, type: "SPARE" },
-  { chairType, location, quantity },     // ❌ remove vendor here
-  { new: true }
-);
-
+    const updated = await Inventory.findOneAndUpdate(
+      { _id: req.params.id, type: "SPARE" },
+      {
+        partName,
+        location,
+        quantity: Number(quantity),
+      },
+      { new: true }
+    );
 
     if (!updated) {
-      return res.status(404).json({
-        success: false,
-        message: "Spare part not found",
-      });
+      return res.status(404).json({ message: "Spare part not found" });
     }
 
     res.json({
@@ -259,10 +268,10 @@ export const updateSparePart = async (req, res) => {
       data: updated,
     });
   } catch (error) {
-    console.error("Update spare part error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };
+
 
 // Delete
 export const deleteSparePart = async (req, res) => {
@@ -281,6 +290,17 @@ export const deleteSparePart = async (req, res) => {
       });
     }
 
+    // ✅ FIXED LOGGING
+    await logActivity(req, {
+      action: "DELETE_SPARE_PART",
+      module: "Inventory",
+      entityType: "Inventory",
+      entityId: deleted._id,
+      description: `Deleted spare part ${deleted.chairType} from ${deleted.location}`,
+      sourceLocation: deleted.location,
+      destination: "DELETED",
+    });
+
     res.json({
       success: true,
       message: "Spare part deleted successfully",
@@ -290,6 +310,9 @@ export const deleteSparePart = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+
+
 export const checkInventoryForOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
@@ -297,7 +320,22 @@ export const checkInventoryForOrder = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    // Fetch all SPARE PARTS for this chair model
+    /* ================= SPARE ORDER ================= */
+    if (order.orderType === "SPARE") {
+      const spare = await Inventory.findOne({
+        partName: order.chairModel,
+        type: "SPARE",
+      });
+
+      return res.json({
+        orderType: "SPARE",
+        partName: order.chairModel,
+        requiredQuantity: order.quantity,
+        available: spare?.quantity || 0,
+      });
+    }
+
+    /* ================= FULL ORDER ================= */
     const parts = await Inventory.find({
       chairType: order.chairModel,
       type: "SPARE",
@@ -305,6 +343,7 @@ export const checkInventoryForOrder = async (req, res) => {
 
     if (parts.length === 0) {
       return res.json({
+        orderType: "FULL",
         chairModel: order.chairModel,
         requiredQuantity: order.quantity,
         totalAvailable: 0,
@@ -312,7 +351,6 @@ export const checkInventoryForOrder = async (req, res) => {
       });
     }
 
-    // Group by partName
     const grouped = {};
     parts.forEach((p) => {
       if (!grouped[p.partName]) {
@@ -321,7 +359,6 @@ export const checkInventoryForOrder = async (req, res) => {
       grouped[p.partName] += p.quantity;
     });
 
-    // Convert to array
     const partList = Object.entries(grouped).map(
       ([partName, available]) => ({
         partName,
@@ -329,12 +366,12 @@ export const checkInventoryForOrder = async (req, res) => {
       })
     );
 
-    // Minimum decides how many chairs can be built
     const totalAvailable = Math.min(
       ...partList.map((p) => p.available)
     );
 
     res.json({
+      orderType: "FULL",
       chairModel: order.chairModel,
       requiredQuantity: order.quantity,
       totalAvailable,
@@ -345,10 +382,22 @@ export const checkInventoryForOrder = async (req, res) => {
     res.status(500).json({ message: "Inventory check failed" });
   }
 };
+
 export const getChairModels = async (req, res) => {
   try {
     const models = await Inventory.find({ type: "FULL" }).distinct("chairType");
     res.json({ models });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+export const getSparePartNames = async (req, res) => {
+  try {
+    const parts = await Inventory
+      .find({ type: "SPARE" })
+      .distinct("partName");
+
+    res.json({ parts });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

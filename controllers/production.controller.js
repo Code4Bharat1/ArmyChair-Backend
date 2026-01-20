@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import User from "../models/User.model.js";
 import ProductionInward from "../models/productionInward.model.js";
+import { logActivity } from "../utils/logActivity.js";
 
 /* ================= ADD INWARD ================= */
 export const addProductionInward = async (req, res) => {
@@ -37,6 +38,14 @@ export const addProductionInward = async (req, res) => {
       createdBy: req.user.id,
       status: "PENDING",
     });
+await logActivity(req, {
+  action: "PRODUCTION_INWARD_CREATED",
+  module: "Production",
+  entityType: "ProductionInward",
+  entityId: inward._id,
+  description: `Submitted inward ${partName} qty ${quantity} for warehouse approval`,
+  assignedBy: req.user.name,
+});
 
     res.status(201).json({
       success: true,

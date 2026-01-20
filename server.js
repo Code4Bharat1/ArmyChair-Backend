@@ -12,9 +12,13 @@ import transferRoutes from "./routes/transfer.routes.js";
 import taskRoutes from "./routes/task.routes.js";
 import vendorRoutes from "./routes/vendor.routes.js";
 import productionRoutes from "./routes/production.routes.js";
-
-
-
+import activityRoutes from "./routes/adminActivity.routes.js";
+import workTimeRoutes from "./routes/workTime.routes.js";
+import activityExportRoutes from "./routes/activityExport.routes.js";
+import { startActivityArchiveCron } from "./cron/activityArchive.cron.js";
+import { startActivityCleanupCron } from "./cron/activityCleanup.cron.js";
+import "./models/vendor.model.js";
+import "./models/order.model.js";
 
 dotenv.config();
 
@@ -56,8 +60,13 @@ app.use("/api/tasks", taskRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/production", productionRoutes);
 
+app.use("/api/work", workTimeRoutes);
 
+app.use("/activity", activityRoutes);
 
+startActivityArchiveCron();
+startActivityCleanupCron();
+app.use("/api/activity", activityExportRoutes);
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

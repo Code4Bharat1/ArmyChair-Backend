@@ -73,6 +73,7 @@ export const getAllReturns = async (req, res) => {
       deliveryDate: r.deliveryDate,
       returnDate: r.returnDate,
       category: r.category,
+      status: r.status, 
       movedToInventory: r.movedToInventory
     }));
 
