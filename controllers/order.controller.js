@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Order from "../models/order.model.js";
 import { createVendor } from "./vendor.controller.js";
 import { logActivity } from "../utils/logActivity.js";
@@ -15,13 +16,7 @@ export const createOrder = async (req, res) => {
       orderType = "FULL",
     } = req.body;
 
-    if (
-      !dispatchedTo ||
-      !chairModel ||
-      !orderDate ||
-      !deliveryDate ||
-      !quantity
-    ) {
+    if (!dispatchedTo || !chairModel || !orderDate || !deliveryDate || !quantity) {
       return res.status(400).json({
         success: false,
         message: "All fields are required",
@@ -43,10 +38,19 @@ export const createOrder = async (req, res) => {
       assignedSalesPerson = creatorId;
     }
 
-    const vendor = await createVendor(dispatchedTo);
+    /* ========= VENDOR HANDLING ========= */
+    let vendorId;
 
+    if (mongoose.Types.ObjectId.isValid(dispatchedTo)) {
+      vendorId = dispatchedTo;
+    } else {
+      const vendor = await createVendor(dispatchedTo);
+      vendorId = vendor._id;
+    }
+
+    /* ========= CREATE ORDER ========= */
     const order = await Order.create({
-      dispatchedTo: vendor._id,
+      dispatchedTo: vendorId,
       chairModel,
       orderType,
       orderDate,
@@ -57,6 +61,7 @@ export const createOrder = async (req, res) => {
       salesPerson: assignedSalesPerson,
       progress: "ORDER_PLACED",
     });
+
     await logActivity(req, {
       action: "CREATE_ORDER",
       module: "Order",
@@ -91,16 +96,9 @@ export const getOrders = async (req, res) => {
       filter.salesPerson = userId;
     }
 
-    // ❗ warehouse CAN see partial orders (no filter applied)
-
     const orders = await Order.find(filter)
       .sort({ createdAt: -1 })
-      .populate({
-  path: "dispatchedTo",
-  select: "name",
-  options: { strictPopulate: false }
-})
-
+      .populate("dispatchedTo", "name")
       .populate("createdBy", "name email")
       .populate("salesPerson", "name email");
 
@@ -113,7 +111,6 @@ export const getOrders = async (req, res) => {
     });
   }
 };
-
 /* ================= GET SINGLE ORDER ================= */
 export const getOrderById = async (req, res) => {
   try {
@@ -153,7 +150,6 @@ export const updateOrder = async (req, res) => {
       });
     }
 
-    // 🔒 lock after warehouse processing
     if (order.progress !== "ORDER_PLACED") {
       return res.status(403).json({
         success: false,
@@ -173,21 +169,35 @@ export const updateOrder = async (req, res) => {
 
     for (const key of allowedUpdates) {
       if (req.body[key] !== undefined) {
-        updates[key] =
-          key === "quantity" ? Number(req.body[key]) : req.body[key];
+        if (key === "quantity") {
+          updates[key] = Number(req.body[key]);
+        }
+        else if (key === "dispatchedTo") {
+          if (mongoose.Types.ObjectId.isValid(req.body[key])) {
+            updates[key] = req.body[key];
+          } else {
+            const vendor = await createVendor(req.body[key]);
+            updates[key] = vendor._id;
+          }
+        }
+        else {
+          updates[key] = req.body[key];
+        }
       }
     }
 
-    const updatedOrder = await Order.findByIdAndUpdate(req.params.id, updates, {
-      new: true,
-      runValidators: true,
-    });
+    const updatedOrder = await Order.findByIdAndUpdate(
+      req.params.id,
+      updates,
+      { new: true, runValidators: true }
+    );
+
     await logActivity(req, {
-      action: "ORDER_STATUS_UPDATE",
+      action: "ORDER_UPDATE",
       module: "Order",
       entityType: "Order",
-      entityId: order._id,
-      description: `Order ${order.orderId} moved to ${progress}`,
+      entityId: updatedOrder._id,
+      description: `Order ${updatedOrder.orderId} updated`,
     });
 
     res.status(200).json({
@@ -196,13 +206,13 @@ export const updateOrder = async (req, res) => {
       order: updatedOrder,
     });
   } catch (error) {
+    console.error("UPDATE ORDER ERROR:", error);
     res.status(400).json({
       success: false,
       message: error.message,
     });
   }
 };
-
 /* ================= UPDATE ORDER PROGRESS ================= */
 export const updateOrderProgress = async (req, res) => {
   try {
@@ -389,3 +399,4 @@ export const productAnalytics = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+

@@ -1,7 +1,7 @@
 import Return from "../models/return.model.js";
 import Inventory from "../models/inventory.model.js";
 import Order from "../models/order.model.js";
-
+import BadReturn from "../models/badReturn.model.js";
 /**
  * CREATE RETURN ORDER
  * POST /api/returns
@@ -159,6 +159,77 @@ export const moveReturnToFitting = async (req, res) => {
 
   } catch (error) {
     console.error("Move to fitting error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const fittingDecision = async (req, res) => {
+  try {
+    const { decision, remarks, inventoryType } = req.body;
+
+    const returnItem = await Return.findById(req.params.id);
+    if (!returnItem) {
+      return res.status(404).json({ message: "Return not found" });
+    }
+
+   if (["Accepted", "Rejected"].includes(returnItem.status)) {
+  return res.status(400).json({
+    message: "Return already processed",
+  });
+}
+
+
+    // ✅ Update return status
+    returnItem.status = decision;
+    returnItem.fittingDecision = decision;
+    returnItem.fittingRemarks = remarks || "";
+    await returnItem.save();
+
+    // ✅ Inventory update ONLY if accepted
+    if (decision === "Accepted") {
+
+  /* ✅ GOOD → ADD TO INVENTORY */
+  if (inventoryType === "GOOD") {
+    await Inventory.findOneAndUpdate(
+      {
+        partName: returnItem.chairType,
+        type: "SPARE",
+        location: "WAREHOUSE",
+      },
+      {
+        $inc: { quantity: returnItem.quantity },
+        $setOnInsert: {
+          partName: returnItem.chairType,
+          type: "SPARE",
+          location: "WAREHOUSE",
+          createdBy: req.user.id,
+          createdByRole: req.user.role,
+        },
+      },
+      { upsert: true }
+    );
+  }
+
+  /* ❌ BAD → STORE SEPARATELY */
+  if (inventoryType === "BAD") {
+    await BadReturn.create({
+      orderId: returnItem.orderId,
+      chairType: returnItem.chairType,
+      quantity: returnItem.quantity,
+      reason: returnItem.fittingRemarks,
+      returnedFrom: returnItem.returnedFrom,
+      createdBy: req.user.id,
+    });
+  }
+}
+
+
+    res.status(200).json({
+      success: true,
+      message: "Fitting decision processed successfully",
+    });
+  } catch (error) {
+    console.error("Fitting decision error:", error);
     res.status(500).json({ message: error.message });
   }
 };

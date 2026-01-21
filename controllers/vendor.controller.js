@@ -1,16 +1,24 @@
 import Vendor from "../models/vendor.model.js";
 import mongoose from "mongoose";
-//GET ALL VENDORS
+
+/* ================= GET ALL VENDORS ================= */
 export const getVendors = async (req, res) => {
-    const vendors = await Vendor.find ({ isActive: true }).sort({ name:1 });
+  try {
+    const vendors = await Vendor.find({ isActive: true }).sort({ name: 1 });
     return res.json(vendors);
+  } catch (err) {
+    return res.status(500).json({ message: "Failed to fetch vendors" });
+  }
 };
 
-// CREATE VENDORS IF NOT EXISTS
+/* ================= CREATE VENDOR IF NOT EXISTS ================= */
+// ⚠️ INTERNAL UTILITY — DO NOT USE DIRECTLY FROM ROUTES
 export const createVendor = async (name) => {
-  if (!name) return null;
+  if (!name) {
+    throw new Error("Vendor name is required");
+  }
 
-  // ❌ BLOCK ObjectId-like strings
+  // ❌ Prevent ObjectId misuse
   if (mongoose.Types.ObjectId.isValid(name)) {
     throw new Error("Invalid vendor name");
   }
@@ -18,8 +26,12 @@ export const createVendor = async (name) => {
   const normalized = name.trim().toUpperCase();
 
   let vendor = await Vendor.findOne({ name: normalized });
+
   if (!vendor) {
-    vendor = await Vendor.create({ name: normalized });
+    vendor = await Vendor.create({
+      name: normalized,
+      isActive: true,
+    });
   }
 
   return vendor;
