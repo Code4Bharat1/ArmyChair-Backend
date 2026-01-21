@@ -197,7 +197,7 @@ export const updateOrder = async (req, res) => {
       module: "Order",
       entityType: "Order",
       entityId: updatedOrder._id,
-      description: `Order ${updatedOrder.orderId} updated`,
+      description: `Order ${updatedOrder.orderId} updated for ${updatedOrder.chairModel} qty ${updatedOrder.quantity}`,
     });
 
     res.status(200).json({

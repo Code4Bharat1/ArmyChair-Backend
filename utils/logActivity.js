@@ -1,14 +1,9 @@
 import ActivityLog from "../models/activityLog.model.js";
 import { appendActivityToExcel } from "./activityExcelWriter.js";
 import User from "../models/User.model.js";
-
 export const logActivity = async (req, payload) => {
-  if (!req.user?.id) {
-    console.error("logActivity called without req.user.id");
-    return;
-  }
+  if (!req.user?.id) return;
 
-  // ✅ ENSURE name & role ALWAYS EXIST
   let userName = req.user.name;
   let userRole = req.user.role;
 
@@ -31,15 +26,6 @@ export const logActivity = async (req, payload) => {
     destination: payload.destination,
   });
 
-  // 🔥 Excel archive (PERMANENT)
-  await appendActivityToExcel({
-    createdAt: log.createdAt,
-    action: log.action,
-    module: log.module,
-    description: log.description,
-    userName,
-    userRole,
-  });
-
   return log;
 };
+

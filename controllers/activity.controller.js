@@ -2,7 +2,7 @@ import ActivityLogModel from "../models/activityLog.model.js";
 
 export const getActivityLogs = async (req, res) => {
   try {
-    const logs = await ActivityLogModel.find()
+    const logs = await ActivityLogModel.find({ isDeleted: false })
       .populate("user", "name role")
       .sort({ createdAt: -1 })
       .limit(1000);

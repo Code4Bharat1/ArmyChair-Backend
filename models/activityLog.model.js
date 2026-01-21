@@ -7,10 +7,10 @@ const activityLogSchema = new mongoose.Schema(
     userName: { type: String, required: true },
     userRole: { type: String, required: true },
 
-    action: { type: String, required: true }, // WORK_TIME, INVENTORY_IN, ORDER_CREATE…
-    module: { type: String, required: true }, // Inventory, Order, Warehouse, Production…
+    action: { type: String, required: true },
+    module: { type: String, required: true },
 
-    entityType: { type: String }, // Inventory, Order, ProductionInward…
+    entityType: { type: String },
     entityId: { type: mongoose.Schema.Types.ObjectId },
 
     description: { type: String, required: true },
@@ -18,8 +18,11 @@ const activityLogSchema = new mongoose.Schema(
     sourceLocation: { type: String },
     destination: { type: String },
     assignedBy: { type: String },
+
+    // 🔐 SAFETY
+    isDeleted: { type: Boolean, default: false },
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 
 export default mongoose.model("ActivityLog", activityLogSchema);
