@@ -2,43 +2,74 @@ import Inventory from "../models/inventory.model.js";
 import Order from "../models/order.model.js";
 import User from "../models/User.model.js";
 
-/* ================= GET NOTIFICATIONS ================= */
+
 export const getNotifications = async (req, res) => {
   try {
     const notifications = [];
 
-    /* ================= FULL INVENTORY (CHAIRS) ================= */
-    const fullStockAlerts = await Inventory.find({
-      type: "FULL",
-      $expr: { $lt: ["$quantity", "$minQuantity"] },
-    });
+    /* ================= FULL INVENTORY ================= */
+    const fullItems = await Inventory.find({ type: "FULL" });
 
-    fullStockAlerts.forEach((item) => {
-      const level = item.quantity === 0 ? "Critical" : "Low";
-
-      notifications.push({
-        _id: `full-${item._id}`,
-        title: `${level} Stock Alert`,
-        message: `${item.chairType} (${item.color}) has ${item.quantity} units left`,
-        redirectUrl: "/superadmin/inventory",
-      });
+    fullItems.forEach((item) => {
+      if (item.quantity === 0) {
+        notifications.push({
+          _id: `full-critical-${item._id}`,
+          title: "Critical Stock Alert",
+          message: `${item.chairType} (${item.color}) is out of stock`,
+          redirectUrl: "/superadmin/inventory",
+        });
+      } 
+      else if (item.quantity < item.minQuantity) {
+        notifications.push({
+          _id: `full-low-${item._id}`,
+          title: "Low Stock Alert",
+          message: `${item.chairType} (${item.color}) has only ${item.quantity} units`,
+          redirectUrl: "/superadmin/inventory",
+        });
+      } 
+      else if (item.maxQuantity && item.quantity > item.maxQuantity) {
+        notifications.push({
+          _id: `full-over-${item._id}`,
+          title: "Overstock Alert",
+          message: `${item.chairType} (${item.color}) exceeds max stock`,
+          redirectUrl: "/superadmin/inventory",
+        });
+      }
     });
 
     /* ================= SPARE INVENTORY ================= */
-    const spareStockAlerts = await Inventory.find({
+    const spareItems = await Inventory.find({
       type: "SPARE",
-      quantity: { $lt: 5 },
+      maxQuantity: { $exists: true },
     });
 
-    spareStockAlerts.forEach((item) => {
-      const level = item.quantity === 0 ? "Critical" : "Low";
+    spareItems.forEach((item) => {
+      const lowThreshold = Math.ceil(item.maxQuantity * 0.2);
 
-      notifications.push({
-        _id: `spare-${item._id}`,
-        title: `${level} Spare Stock Alert`,
-        message: `${item.partName} has ${item.quantity} units left`,
-        redirectUrl: "/superadmin/spareparts",
-      });
+      if (item.quantity === 0) {
+        notifications.push({
+          _id: `spare-critical-${item._id}`,
+          title: "Critical Spare Stock",
+          message: `${item.partName} is out of stock`,
+          redirectUrl: "/superadmin/spareparts",
+        });
+      } 
+      else if (item.quantity < lowThreshold) {
+        notifications.push({
+          _id: `spare-low-${item._id}`,
+          title: "Low Spare Stock",
+          message: `${item.partName} has only ${item.quantity} units`,
+          redirectUrl: "/superadmin/spareparts",
+        });
+      } 
+      else if (item.quantity > item.maxQuantity) {
+        notifications.push({
+          _id: `spare-over-${item._id}`,
+          title: "Overstock Alert",
+          message: `${item.partName} exceeds max stock`,
+          redirectUrl: "/superadmin/spareparts",
+        });
+      }
     });
 
     /* ================= DELAYED ORDERS ================= */
@@ -63,29 +94,55 @@ export const getNotifications = async (req, res) => {
   }
 };
 
-/* ================= UNREAD COUNT ================= */
 export const getUnreadCount = async (req, res) => {
   try {
-    const fullCount = await Inventory.countDocuments({
-      type: "FULL",
-      $expr: { $lt: ["$quantity", "$minQuantity"] },
+    let count = 0;
+
+    /* ================= FULL INVENTORY ================= */
+    const fullItems = await Inventory.find(
+      { type: "FULL" },
+      { quantity: 1, minQuantity: 1, maxQuantity: 1 }
+    );
+
+    fullItems.forEach((item) => {
+      if (
+        item.quantity === 0 ||
+        item.quantity < item.minQuantity ||
+        (item.maxQuantity && item.quantity > item.maxQuantity)
+      ) {
+        count++;
+      }
     });
 
-    const spareCount = await Inventory.countDocuments({
-      type: "SPARE",
-      quantity: { $lt: 5 },
+    /* ================= SPARE INVENTORY ================= */
+    const spareItems = await Inventory.find(
+      { type: "SPARE", maxQuantity: { $exists: true } },
+      { quantity: 1, maxQuantity: 1 }
+    );
+
+    spareItems.forEach((item) => {
+      const lowThreshold = Math.ceil(item.maxQuantity * 0.2);
+
+      if (
+        item.quantity === 0 ||
+        item.quantity < lowThreshold ||
+        item.quantity > item.maxQuantity
+      ) {
+        count++;
+      }
     });
 
+    /* ================= DELAYED ORDERS ================= */
     const orderCount = await Order.countDocuments({
       deliveryDate: { $lt: new Date() },
       status: { $ne: "DELIVERED" },
     });
 
     res.json({
-      count: fullCount + spareCount + orderCount,
+      count: count + orderCount,
     });
   } catch (error) {
     console.error("UNREAD COUNT ERROR:", error);
-    res.status(500).json({ message: "Count failed" });
+    res.status(500).json({ message: "Unread count failed" });
   }
 };

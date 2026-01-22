@@ -47,6 +47,13 @@ const inventorySchema = new mongoose.Schema(
         return this.type === "FULL";
       },
     },
+    maxQuantity: {
+  type: Number,
+  required: function () {
+    return this.type === "FULL" || this.type === "SPARE";
+  },
+},
+
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     createdByRole: String,

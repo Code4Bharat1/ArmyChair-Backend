@@ -79,22 +79,78 @@ export const createOrder = async (req, res) => {
 /* ================= GET ORDERS ================= */
 export const getOrders = async (req, res) => {
   try {
-    const { progress, from, to, staffId } = req.query;
+    const { progress, from, to, staffId, range } = req.query;
 
     const query = {};
+
+    // 🔐 ADD THIS BLOCK (does not break existing logic)
+    if (req.user.role === "sales") {
+      query.$or = [
+        { createdBy: req.user.id },
+        { salesPerson: req.user.id },
+      ];
+    }
+
 
     if (progress) query.progress = progress;
 
     if (staffId) {
-      query.createdBy = staffId; // 👈 THIS IS THE KEY LINE
+      query.$or = [
+        { createdBy: staffId },
+        { salesPerson: staffId },
+      ];
+    }
+
+    /* RANGE SUPPORT */
+    if (range) {
+      const now = new Date();
+      let start, end;
+
+      if (range === "today") {
+        start = new Date(now.setHours(0, 0, 0, 0));
+        end = new Date(now.setHours(23, 59, 59, 999));
+      }
+
+      if (range === "yesterday") {
+        const y = new Date();
+        y.setDate(y.getDate() - 1);
+        start = new Date(y.setHours(0, 0, 0, 0));
+        end = new Date(y.setHours(23, 59, 59, 999));
+      }
+
+      if (range === "last7days") {
+        start = new Date();
+        start.setDate(start.getDate() - 6);
+        start.setHours(0, 0, 0, 0);
+        end = new Date();
+      }
+
+      if (range === "thisMonth") {
+        start = new Date(now.getFullYear(), now.getMonth(), 1);
+        end = new Date();
+      }
+
+      if (range === "lastMonth") {
+        start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        end = new Date(now.getFullYear(), now.getMonth(), 0);
+      }
+
+      if (start && end) {
+        query.orderDate = {
+          $gte: start,
+          $lte: end,
+        };
+      }
+
     }
 
     if (from && to) {
-      query.createdAt = {
+      query.orderDate = {
         $gte: new Date(from),
         $lte: new Date(to),
       };
     }
+
 
     const orders = await Order.find(query)
       .populate("createdBy", "name")

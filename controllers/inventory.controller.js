@@ -4,22 +4,35 @@ import { createVendor } from "./vendor.controller.js";
 import mongoose from "mongoose";
 import { logActivity } from "../utils/logActivity.js";
 
-const getStockStatus = (qty, minQty) => {
+const getStockStatus = (qty, minQty = 1, maxQty) => {
   if (qty === 0) return "Critical";
-  if (qty < minQty) return "Low";
-  if (qty > minQty * 2) return "Overstocked";
+
+  if (maxQty) {
+    if (qty < Math.ceil(maxQty * 0.2)) return "Low Stock";
+    if (qty > maxQty) return "Overstocked";
+  }
+
   return "Healthy";
 };
+
+
+
 
 //  CREATE INVENTORY ITEM
 export const createInventory = async (req, res) => {
   try {
-    const { chairType, color, vendor, quantity, minQuantity, location } =
-      req.body || {};
+    const {
+      chairType,
+      color,
+      vendor,
+      quantity,
+      minQuantity,
+      maxQuantity,
+      location,
+    } = req.body || {};
 
     if (
       !chairType ||
-      !color ||
       !vendor ||
       quantity === undefined ||
       minQuantity === undefined ||
@@ -30,17 +43,24 @@ export const createInventory = async (req, res) => {
 
     const vendorDoc = await createVendor(vendor);
 
-    const inventory = await Inventory.create({
+    const inventoryData = {
       chairType,
       color,
       vendor: vendorDoc._id,
       quantity: Number(quantity),
       minQuantity: Number(minQuantity),
       location,
-      type: "FULL", // 🔥🔥🔥 THIS IS THE FIX
+      type: "FULL",
       createdBy: req.user?.id,
       createdByRole: req.user?.role,
-    });
+    };
+
+    // 👑 ADMIN ONLY
+    if (req.user?.role === "admin" && maxQuantity !== undefined) {
+      inventoryData.maxQuantity = Number(maxQuantity);
+    }
+
+    const inventory = await Inventory.create(inventoryData);
 
     res.status(201).json({
       message: "Inventory item added successfully",
@@ -51,6 +71,7 @@ export const createInventory = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 //  GET ALL INVENTORY
 export const getAllInventory = async (req, res) => {
@@ -63,8 +84,18 @@ export const getAllInventory = async (req, res) => {
       ...i.toObject(),
       status:
         i.type === "FULL"
-          ? getStockStatus(i.quantity, i.minQuantity)
-          : "RAW MATERIAL",
+          ? getStockStatus(
+            i.quantity,
+            i.minQuantity,
+            i.maxQuantity
+          )
+          : getStockStatus(
+            i.quantity,
+            i.minQuantity || 1,
+            i.maxQuantity
+          ),
+
+
     }));
 
     res.status(200).json({
@@ -88,6 +119,15 @@ export const updateInventory = async (req, res) => {
     }
 
     const updateData = {};
+
+    // 👑 ADMIN ONLY maxQuantity
+    if (
+      req.user?.role === "admin" &&
+      req.body.maxQuantity !== undefined
+    ) {
+      updateData.maxQuantity = Number(req.body.maxQuantity);
+    }
+
 
     if (req.body.chairType !== undefined) {
       updateData.chairType = req.body.chairType;
@@ -133,7 +173,9 @@ export const updateInventory = async (req, res) => {
         status: getStockStatus(
           updatedInventory.quantity,
           updatedInventory.minQuantity,
+          updatedInventory.maxQuantity
         ),
+
       },
     });
   } catch (error) {
@@ -202,9 +244,15 @@ export const createSpareParts = async (req, res) => {
           partName,
           location,
           type: "SPARE",
+          maxQuantity:
+  req.user?.role === "admin" && req.body.maxQuantity !== undefined
+    ? Number(req.body.maxQuantity)
+    : undefined,
+
           createdBy: req.user?.id,
           createdByRole: req.user?.role,
         },
+
       },
       { new: true, upsert: true },
     );
@@ -233,19 +281,32 @@ export const getSpareParts = async (req, res) => {
       .populate("createdBy", "name role")
       .sort({ createdAt: -1 });
 
+    const data = parts.map((p) => ({
+      ...p.toObject(),
+      status: getStockStatus(
+        p.quantity,
+        p.minQuantity || 1,
+        p.maxQuantity
+      ),
+    }));
+
     res.status(200).json({
       success: true,
-      inventory: parts,
+      inventory: data,
     });
   } catch (error) {
+    console.error("GET SPARE PARTS ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
 
+
+
+
 // Update
 export const updateSparePart = async (req, res) => {
   try {
-    const { partName, location, quantity } = req.body;
+    const { partName, location, quantity, maxQuantity } = req.body;
 
     if (!partName || !location || quantity == null) {
       return res.status(400).json({
@@ -253,19 +314,30 @@ export const updateSparePart = async (req, res) => {
       });
     }
 
+    const updateData = {
+      partName,
+      location,
+      quantity: Number(quantity),
+    };
+
+    // 👑 ADMIN ONLY: allow updating maxQuantity
+    if (
+      req.user?.role === "admin" &&
+      maxQuantity !== undefined
+    ) {
+      updateData.maxQuantity = Number(maxQuantity);
+    }
+
     const updated = await Inventory.findOneAndUpdate(
       { _id: req.params.id, type: "SPARE" },
-      {
-        partName,
-        location,
-        quantity: Number(quantity),
-      },
-      { new: true },
+      updateData,
+      { new: true, runValidators: true }
     );
 
     if (!updated) {
       return res.status(404).json({ message: "Spare part not found" });
     }
+
     await logActivity(req, {
       action: "INVENTORY_UPDATE",
       module: "Inventory",
@@ -273,15 +345,18 @@ export const updateSparePart = async (req, res) => {
       entityId: updated._id,
       description: `Updated Spare part ${updated.partName} at ${updated.location}`,
     });
+
     res.json({
       success: true,
       message: "Spare part updated successfully",
       data: updated,
     });
   } catch (error) {
+    console.error("UPDATE SPARE PART ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
+
 
 // Delete
 export const deleteSparePart = async (req, res) => {

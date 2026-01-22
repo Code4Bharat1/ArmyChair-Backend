@@ -32,7 +32,17 @@ const taskSchema = new mongoose.Schema(
       default: "Pending",
     },
 
+    dueAt: {
+      type: Date,
+      required: true,
+    },
+
     completedAt: Date,
+
+    isDelayed: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );

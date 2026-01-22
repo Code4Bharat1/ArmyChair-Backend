@@ -6,6 +6,7 @@ import {
   completeTask,
   getAllTasks,
   getMyTaskHistory,
+  deleteTask,   // 👈 ADD THIS
 } from "../controllers/task.controller.js";
 
 const router = express.Router();
@@ -14,6 +15,7 @@ router.post("/assign", protect, assignTask);
 router.get("/my", protect, getMyTask);
 router.put("/complete/:id", protect, completeTask);
 router.get("/all", protect, getAllTasks);
+router.delete("/:id", protect, deleteTask);
 
 router.get("/my/history", protect, getMyTaskHistory);
 export default router;

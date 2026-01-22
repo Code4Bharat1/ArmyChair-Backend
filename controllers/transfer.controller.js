@@ -34,16 +34,16 @@ export const transferInventory = async (req, res) => {
     const destQuery =
       source.type === "SPARE"
         ? {
-            type: "SPARE",
-            partName: source.partName,
-            location: toLocation,
-          }
+          type: "SPARE",
+          partName: source.partName,
+          location: toLocation,
+        }
         : {
-            type: "FULL",
-            chairType: source.chairType,
-            vendor: source.vendor,
-            location: toLocation,
-          };
+          type: "FULL",
+          chairType: source.chairType,
+          vendor: source.vendor,
+          location: toLocation,
+        };
 
     let dest = await Inventory.findOne(destQuery);
 
@@ -53,10 +53,17 @@ export const transferInventory = async (req, res) => {
         ...destQuery,
         quantity: 0,
         minQuantity: source.type === "FULL" ? source.minQuantity : undefined,
+        maxQuantity: source.maxQuantity, // 👈 ADD THIS
         createdBy: req.user?.id,
         createdByRole: req.user?.role,
       });
     }
+    if (dest.maxQuantity && dest.quantity + qty > dest.maxQuantity) {
+      return res.status(400).json({
+        message: "Transfer exceeds maximum allowed stock for destination",
+      });
+    }
+
 
     /* ===== UPDATE STOCK ===== */
     source.quantity -= qty;
