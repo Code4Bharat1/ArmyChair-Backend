@@ -1,65 +1,57 @@
+import csv from "csvtojson";
 import mongoose from "mongoose";
 import Order from "../models/order.model.js";
 import { createVendor } from "./vendor.controller.js";
 import { logActivity } from "../utils/logActivity.js";
 
+
+const createOrderInternal = async ({ row, user }) => {
+  const {
+    dispatchedTo,
+    chairModel,
+    orderType = "FULL",
+    orderDate,
+    deliveryDate,
+    quantity,
+    salesPerson,
+  } = row;
+
+  if (!dispatchedTo || !chairModel || !orderDate || !deliveryDate || !quantity) {
+    throw new Error("Missing required fields");
+  }
+
+  let vendorId;
+  if (mongoose.Types.ObjectId.isValid(dispatchedTo)) {
+    vendorId = dispatchedTo;
+  } else {
+    const vendor = await createVendor(dispatchedTo);
+    vendorId = vendor._id;
+  }
+
+  const creatorId = user.id || user._id;
+  const assignedSalesPerson =
+    user.role === "admin" ? salesPerson || creatorId : creatorId;
+
+  return await Order.create({
+    dispatchedTo: vendorId,
+    chairModel,
+    orderType,
+    orderDate,
+    deliveryDate,
+    quantity: Number(quantity),
+    isPartial: false,
+    createdBy: creatorId,
+    salesPerson: assignedSalesPerson,
+    progress: "ORDER_PLACED",
+  });
+};
+
 /* ================= CREATE ORDER ================= */
 export const createOrder = async (req, res) => {
   try {
-    const {
-      dispatchedTo,
-      chairModel,
-      orderDate,
-      deliveryDate,
-      quantity,
-      salesPerson,
-      orderType = "FULL",
-    } = req.body;
-
-    if (!dispatchedTo || !chairModel || !orderDate || !deliveryDate || !quantity) {
-      return res.status(400).json({
-        success: false,
-        message: "All fields are required",
-      });
-    }
-
-    const creatorId = req.user.id || req.user._id;
-    let assignedSalesPerson;
-
-    if (req.user.role === "admin") {
-      if (!salesPerson) {
-        return res.status(400).json({
-          success: false,
-          message: "Admin must assign a sales person",
-        });
-      }
-      assignedSalesPerson = salesPerson;
-    } else {
-      assignedSalesPerson = creatorId;
-    }
-
-    /* ========= VENDOR HANDLING ========= */
-    let vendorId;
-
-    if (mongoose.Types.ObjectId.isValid(dispatchedTo)) {
-      vendorId = dispatchedTo;
-    } else {
-      const vendor = await createVendor(dispatchedTo);
-      vendorId = vendor._id;
-    }
-
-    /* ========= CREATE ORDER ========= */
-    const order = await Order.create({
-      dispatchedTo: vendorId,
-      chairModel,
-      orderType,
-      orderDate,
-      deliveryDate,
-      quantity: Number(quantity),
-      isPartial: false,
-      createdBy: creatorId,
-      salesPerson: assignedSalesPerson,
-      progress: "ORDER_PLACED",
+    const order = await createOrderInternal({
+      row: req.body,
+      user: req.user,
     });
 
     await logActivity(req, {
@@ -67,8 +59,7 @@ export const createOrder = async (req, res) => {
       module: "Order",
       entityType: "Order",
       entityId: order._id,
-      description: `Created order ${order.orderId} for ${chairModel} qty ${quantity}`,
-      assignedBy: req.user.name,
+      description: `Created order ${order.orderId}`,
     });
 
     res.status(201).json({
@@ -77,7 +68,6 @@ export const createOrder = async (req, res) => {
       order,
     });
   } catch (error) {
-    console.error("CREATE ORDER ERROR:", error);
     res.status(400).json({
       success: false,
       message: error.message,
@@ -85,32 +75,39 @@ export const createOrder = async (req, res) => {
   }
 };
 
+
 /* ================= GET ORDERS ================= */
 export const getOrders = async (req, res) => {
   try {
-    const filter = {};
-    const role = req.user.role;
-    const userId = req.user.id || req.user._id;
+    const { progress, from, to, staffId } = req.query;
 
-    if (role === "sales") {
-      filter.salesPerson = userId;
+    const query = {};
+
+    if (progress) query.progress = progress;
+
+    if (staffId) {
+      query.createdBy = staffId; // 👈 THIS IS THE KEY LINE
     }
 
-    const orders = await Order.find(filter)
-      .sort({ createdAt: -1 })
-      .populate("dispatchedTo", "name")
-      .populate("createdBy", "name email")
-      .populate("salesPerson", "name email");
+    if (from && to) {
+      query.createdAt = {
+        $gte: new Date(from),
+        $lte: new Date(to),
+      };
+    }
 
-    res.status(200).json({ success: true, orders });
-  } catch (error) {
-    console.error("GET ORDERS ERROR:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch orders",
-    });
+    const orders = await Order.find(query)
+      .populate("createdBy", "name")
+      .populate("dispatchedTo", "name")
+      .sort({ createdAt: -1 });
+
+    res.json({ orders });
+  } catch (err) {
+    console.error("GET ORDERS ERROR:", err);
+    res.status(500).json({ message: err.message });
   }
 };
+
 /* ================= GET SINGLE ORDER ================= */
 export const getOrderById = async (req, res) => {
   try {
@@ -364,7 +361,13 @@ export const staffPerformanceAnalytics = async (req, res) => {
       },
       { $unwind: "$user" },
       {
-        $project: { name: "$user.name", role: "$user.role", orders: 1, _id: 0 },
+        $project: {
+          _id: "$user._id",   // ✅ ADD THIS
+          name: "$user.name",
+          role: "$user.role",
+          orders: 1,
+        }
+
       },
       { $sort: { orders: -1 } },
     ]);
@@ -400,3 +403,56 @@ export const productAnalytics = async (req, res) => {
   }
 };
 
+export const uploadOrders = async (req, res) => {
+  try {
+    if (!req.files || !req.files.length) {
+      return res.status(400).json({ message: "No files uploaded" });
+    }
+
+    let total = 0;
+    let created = 0;
+    const errors = [];
+
+    for (const file of req.files) {
+      const csvString = file.buffer.toString("utf-8");
+      const rows = await csv().fromString(csvString);
+
+      for (const row of rows) {
+        total++;
+        try {
+          const order = await createOrderInternal({
+            row,
+            user: req.user,
+          });
+
+          await logActivity(req, {
+            action: "CREATE_ORDER_BULK",
+            module: "Order",
+            entityType: "Order",
+            entityId: order._id,
+            description: `Bulk order created (${order.orderId})`,
+          });
+
+          created++;
+        } catch (err) {
+          errors.push({
+            row: total,
+            message: err.message,
+          });
+        }
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      total,
+      created,
+      failed: errors.length,
+      errors,
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: "Bulk upload failed",
+    });
+  }
+};

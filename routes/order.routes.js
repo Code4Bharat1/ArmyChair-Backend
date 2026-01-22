@@ -9,16 +9,30 @@ import {
   getOrderByOrderId,
   staffPerformanceAnalytics,
   productAnalytics,
+  uploadOrders,
+  
 } from "../controllers/order.controller.js";
 
 // (Optional) JWT middleware
 import { protect } from "../middlewares/auth.middleware.js";
 
+import multer from "multer";
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+});
 const router = express.Router();
 
 
 router.post("/", protect, createOrder);
 router.get("/", protect, getOrders);
+router.post(
+  "/upload",
+  protect,
+  upload.array("files"),
+  uploadOrders
+);
 
 router.get("/analytics/staff", protect, staffPerformanceAnalytics);
 router.get("/by-order-id/:orderId", protect, getOrderByOrderId);

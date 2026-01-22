@@ -17,6 +17,7 @@ import productionRoutes from "./routes/production.routes.js";
 import activityRoutes from "./routes/adminActivity.routes.js";
 import workTimeRoutes from "./routes/workTime.routes.js";
 import activityExportRoutes from "./routes/activityExport.routes.js";
+import notificationRoutes from "./routes/notification.routes.js";
 
 // middleware
 import { apiLimiter } from "./middlewares/rateLimiter.js";
@@ -70,6 +71,7 @@ app.use("/api/production", productionRoutes);
 app.use("/api/work", workTimeRoutes);
 app.use("/activity", activityRoutes);
 app.use("/api/activity", activityExportRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // ✅ START CRON (ONLY ONCE)
 startActivityArchiveCron();

@@ -14,7 +14,8 @@ const getStockStatus = (qty, minQty) => {
 //  CREATE INVENTORY ITEM
 export const createInventory = async (req, res) => {
   try {
-    const { chairType, color, vendor, quantity, minQuantity, location } = req.body || {};
+    const { chairType, color, vendor, quantity, minQuantity, location } =
+      req.body || {};
 
     if (
       !chairType ||
@@ -50,7 +51,6 @@ export const createInventory = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 
 //  GET ALL INVENTORY
 export const getAllInventory = async (req, res) => {
@@ -93,10 +93,9 @@ export const updateInventory = async (req, res) => {
       updateData.chairType = req.body.chairType;
     }
     if (req.body.vendor !== undefined) {
-  const vendorDoc = await createVendor(req.body.vendor);
-  updateData.vendor = vendorDoc._id; // ✅ FIXED
-}
-
+      const vendorDoc = await createVendor(req.body.vendor);
+      updateData.vendor = vendorDoc._id; // ✅ FIXED
+    }
 
     if (req.body.quantity !== undefined) {
       updateData.quantity = Number(req.body.quantity);
@@ -207,9 +206,15 @@ export const createSpareParts = async (req, res) => {
           createdByRole: req.user?.role,
         },
       },
-      { new: true, upsert: true }
+      { new: true, upsert: true },
     );
-
+    await logActivity(req, {
+      action: "INVENTORY_CREATE",
+      module: "Inventory",
+      entityType: "Inventory",
+      entityId: sparePart._id,
+      description: `Created spare part ${sparePart.partName} at ${sparePart.location}`,
+    });
     res.status(201).json({
       success: true,
       message: "Spare part added successfully",
@@ -255,13 +260,19 @@ export const updateSparePart = async (req, res) => {
         location,
         quantity: Number(quantity),
       },
-      { new: true }
+      { new: true },
     );
 
     if (!updated) {
       return res.status(404).json({ message: "Spare part not found" });
     }
-
+    await logActivity(req, {
+      action: "INVENTORY_UPDATE",
+      module: "Inventory",
+      entityType: "Inventory",
+      entityId: updated._id,
+      description: `Updated Spare part ${updated.partName} at ${updated.location}`,
+    });
     res.json({
       success: true,
       message: "Spare part updated successfully",
@@ -271,7 +282,6 @@ export const updateSparePart = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 
 // Delete
 export const deleteSparePart = async (req, res) => {
@@ -296,7 +306,7 @@ export const deleteSparePart = async (req, res) => {
       module: "Inventory",
       entityType: "Inventory",
       entityId: deleted._id,
-      description: `Deleted spare part ${deleted.chairType} from ${deleted.location}`,
+      description: `Deleted spare part ${deleted.partName} from ${deleted.location}`,
       sourceLocation: deleted.location,
       destination: "DELETED",
     });
@@ -310,8 +320,6 @@ export const deleteSparePart = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
-
 
 export const checkInventoryForOrder = async (req, res) => {
   try {
@@ -359,16 +367,12 @@ export const checkInventoryForOrder = async (req, res) => {
       grouped[p.partName] += p.quantity;
     });
 
-    const partList = Object.entries(grouped).map(
-      ([partName, available]) => ({
-        partName,
-        available,
-      })
-    );
+    const partList = Object.entries(grouped).map(([partName, available]) => ({
+      partName,
+      available,
+    }));
 
-    const totalAvailable = Math.min(
-      ...partList.map((p) => p.available)
-    );
+    const totalAvailable = Math.min(...partList.map((p) => p.available));
 
     res.json({
       orderType: "FULL",
@@ -393,9 +397,7 @@ export const getChairModels = async (req, res) => {
 };
 export const getSparePartNames = async (req, res) => {
   try {
-    const parts = await Inventory
-      .find({ type: "SPARE" })
-      .distinct("partName");
+    const parts = await Inventory.find({ type: "SPARE" }).distinct("partName");
 
     res.json({ parts });
   } catch (err) {

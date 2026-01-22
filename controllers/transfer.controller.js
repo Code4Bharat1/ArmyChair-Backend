@@ -1,54 +1,64 @@
 import Inventory from "../models/inventory.model.js";
-import StockMovement from "../models/stockMovement.model.js";
-
-export const transferStock = async (req, res) => {
+import { logActivity } from "../utils/logActivity.js";
+import activityLogModel from "../models/activityLog.model.js";
+export const transferInventory = async (req, res) => {
   try {
     const { sourceId, toLocation, quantity } = req.body;
 
-    if (!sourceId || !toLocation || !quantity) {
-      return res.status(400).json({ message: "All fields required" });
+    if (!sourceId || !toLocation || quantity == null) {
+      return res.status(400).json({ message: "All fields are required" });
     }
 
     const qty = Number(quantity);
-
     if (qty <= 0) {
       return res.status(400).json({ message: "Invalid quantity" });
     }
 
     /* ===== FIND SOURCE ===== */
     const source = await Inventory.findById(sourceId);
-
     if (!source) {
-      return res.status(404).json({ message: "Source stock not found" });
+      return res.status(404).json({ message: "Source inventory not found" });
     }
 
     if (source.location === toLocation) {
-      return res.status(400).json({ message: "Source and destination same" });
+      return res
+        .status(400)
+        .json({ message: "Source and destination cannot be same" });
     }
 
     if (source.quantity < qty) {
       return res.status(400).json({ message: "Insufficient stock" });
     }
 
-    /* ===== FIND / CREATE DEST ===== */
-    let dest = await Inventory.findOne({
-      chairType: source.chairType,
-      vendor: source.vendor,
-      location: toLocation,
-      type: source.type,
-    });
+    /* ===== DEST QUERY ===== */
+    const destQuery =
+      source.type === "SPARE"
+        ? {
+            type: "SPARE",
+            partName: source.partName,
+            location: toLocation,
+          }
+        : {
+            type: "FULL",
+            chairType: source.chairType,
+            vendor: source.vendor,
+            location: toLocation,
+          };
 
+    let dest = await Inventory.findOne(destQuery);
+
+    /* ===== CREATE DEST IF NOT EXISTS ===== */
     if (!dest) {
       dest = new Inventory({
-        chairType: source.chairType,
-        vendor: source.vendor,
-        location: toLocation,
+        ...destQuery,
         quantity: 0,
-        type: source.type,
+        minQuantity: source.type === "FULL" ? source.minQuantity : undefined,
+        createdBy: req.user?.id,
+        createdByRole: req.user?.role,
       });
     }
 
-    /* ===== UPDATE ===== */
+    /* ===== UPDATE STOCK ===== */
     source.quantity -= qty;
     dest.quantity += qty;
 
@@ -56,32 +66,40 @@ export const transferStock = async (req, res) => {
     await dest.save();
 
     /* ===== LOG ===== */
-    await StockMovement.create({
-      chairType: source.chairType,
-      fromLocation: source.location,
-      toLocation,
-      quantity: qty,
-      movedBy: req.user?.id,
-      reason: "TRANSFER",
+    await logActivity(req, {
+      action: "TRANSFER",
+      module: "Inventory",
+      entityType: "Inventory",
+      entityId: source._id,
+      description:
+        source.type === "SPARE"
+          ? `Transferred ${qty} ${source.partName} from ${source.location} to ${toLocation}`
+          : `Transferred ${qty} ${source.chairType} from ${source.location} to ${toLocation}`,
+      sourceLocation: source.location,
+      destination: toLocation,
     });
 
-    res.json({ success: true, message: "Stock transferred successfully" });
+    res.json({
+      success: true,
+      message: "Inventory transferred successfully",
+    });
   } catch (err) {
     console.error("TRANSFER ERROR:", err);
-    res.status(500).json({ message: "Transfer failed" });
+    res.status(500).json({ message: err.message });
   }
 };
-
-
 export const getStockMovements = async (req, res) => {
   try {
-    const movements = await StockMovement.find()
-      .populate("movedBy", "name email role")
-      .sort({ createdAt: -1 });
+    const movements = await activityLogModel.find({
+      action: "TRANSFER",
+      module: "Inventory",
+      isDeleted: false,
+    }).sort({ createdAt: -1 });
 
-    res.json({ success: true, movements });
+    res.json({ movements });
   } catch (err) {
-    console.error("MOVEMENT FETCH ERROR:", err);
-    res.status(500).json({ message: "Failed to fetch stock movements" });
+    console.error("GET STOCK MOVEMENTS ERROR:", err);
+    res.status(500).json({ message: err.message });
   }
 };
+
