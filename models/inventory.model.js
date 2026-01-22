@@ -47,11 +47,9 @@ const inventorySchema = new mongoose.Schema(
         return this.type === "FULL";
       },
     },
-    maxQuantity: {
+   maxQuantity: {
   type: Number,
-  required: function () {
-    return this.type === "FULL" || this.type === "SPARE";
-  },
+  default: 0,
 },
 
 

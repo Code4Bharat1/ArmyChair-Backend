@@ -89,9 +89,20 @@ export const dispatchOrderParts = async (req, res) => {
     for (const item of items) {
       const stock = await Inventory.findById(item.inventoryId).session(session);
 
-      if (!stock || stock.type !== "SPARE") {
-        throw new Error("Invalid inventory item");
-      }
+     if (!stock) {
+  throw new Error("Inventory not found");
+}
+
+// If it's a spare order → must use SPARE items
+if (order.orderType === "SPARE" && stock.type !== "SPARE") {
+  throw new Error("Invalid spare inventory item");
+}
+
+// If it's a full order → allow chair components
+if (order.orderType === "FULL" && stock.type === "FULL") {
+  throw new Error("Cannot deduct full chair stock for build process");
+}
+
 
       if (stock.quantity < item.qty) {
         throw new Error(
