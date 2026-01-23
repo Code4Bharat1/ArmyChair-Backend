@@ -7,11 +7,14 @@ export const startActivityArchiveCron = () => {
   cron.schedule("59 23 * * *", async () => {
     console.log("📦 Starting daily activity archive job");
 
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
+    // Archive YESTERDAY instead of today
+const start = new Date();
+start.setDate(start.getDate() - 1);
+start.setHours(0, 0, 0, 0);
 
-    const end = new Date(start);
-    end.setDate(start.getDate() + 1);
+const end = new Date(start);
+end.setDate(start.getDate() + 1);
+
 
     try {
       // 1️⃣ Fetch today's logs
@@ -36,10 +39,10 @@ export const startActivityArchiveCron = () => {
       await exportActivityLogsToExcel(start);
 
       // 4️⃣ Soft delete logs
-      await ActivityLog.updateMany(
-        { createdAt: { $gte: start, $lt: end } },
-        { isDeleted: true }
-      );
+      await ActivityLog.deleteMany({
+  createdAt: { $gte: start, $lt: end }
+});
+
 
       console.log("✅ Activity logs archived & cleaned safely");
     } catch (err) {

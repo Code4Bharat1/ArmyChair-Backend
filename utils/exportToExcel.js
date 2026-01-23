@@ -7,16 +7,32 @@ export const exportActivityLogsToExcel = async (date) => {
   const folder = path.join(process.cwd(), "exports");
   if (!fs.existsSync(folder)) fs.mkdirSync(folder);
 
-  const day = date.toISOString().split("T")[0];
-  const filePath = path.join(folder, `activity-${day}.xlsx`);
+  // 🟢 Convert to start of day (LOCAL TIME SAFE)
+const [year, month, dayPart] = date.split("-");
 
-  const logs = await ActivityLog.find({
-    createdAt: {
-      $gte: new Date(day),
-      $lt: new Date(new Date(day).setDate(new Date(day).getDate() + 1)),
-    },
-    isDeleted: false,
-  }).sort({ createdAt: 1 });
+const start = new Date(
+  Number(year),
+  Number(month) - 1,
+  Number(dayPart),
+  0, 0, 0, 0
+);
+
+const end = new Date(
+  Number(year),
+  Number(month) - 1,
+  Number(dayPart) + 1,
+  0, 0, 0, 0
+);
+
+const logs = await ActivityLog.find({
+  createdAt: { $gte: start, $lt: end },
+}).sort({ createdAt: 1 });
+
+if (!logs.length) return null;
+
+const day = start.toISOString().split("T")[0];
+
+  const filePath = path.join(folder, `activity-${day}.xlsx`);
 
   const rows = logs.map((l) => ({
     Time: l.createdAt.toLocaleString(),
@@ -34,4 +50,7 @@ export const exportActivityLogsToExcel = async (date) => {
   XLSX.utils.book_append_sheet(workbook, worksheet, "Activity");
 
   XLSX.writeFile(workbook, filePath);
+
+  return filePath;
 };
+

@@ -41,12 +41,14 @@ export const createInventory = async (req, res) => {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    const vendorDoc = await createVendor(vendor);
+    if (!mongoose.Types.ObjectId.isValid(vendor)) {
+      return res.status(400).json({ message: "Invalid vendor ID" });
+    }
 
     const inventoryData = {
       chairType,
       color,
-      vendor: vendorDoc._id,
+      vendor, // ✅ directly use ObjectId
       quantity: Number(quantity),
       minQuantity: Number(minQuantity),
       location,
@@ -55,7 +57,6 @@ export const createInventory = async (req, res) => {
       createdByRole: req.user?.role,
     };
 
-    // 👑 ADMIN ONLY
     if (req.user?.role === "admin" && maxQuantity !== undefined) {
       inventoryData.maxQuantity = Number(maxQuantity);
     }
@@ -71,6 +72,7 @@ export const createInventory = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 
 //  GET ALL INVENTORY
@@ -133,9 +135,12 @@ export const updateInventory = async (req, res) => {
       updateData.chairType = req.body.chairType;
     }
     if (req.body.vendor !== undefined) {
-      const vendorDoc = await createVendor(req.body.vendor);
-      updateData.vendor = vendorDoc._id; // ✅ FIXED
-    }
+  if (!mongoose.Types.ObjectId.isValid(req.body.vendor)) {
+    return res.status(400).json({ message: "Invalid vendor ID" });
+  }
+  updateData.vendor = req.body.vendor;
+}
+
 
     if (req.body.quantity !== undefined) {
       updateData.quantity = Number(req.body.quantity);
@@ -245,9 +250,9 @@ export const createSpareParts = async (req, res) => {
           location,
           type: "SPARE",
           maxQuantity:
-  req.user?.role === "admin" && req.body.maxQuantity !== undefined
-    ? Number(req.body.maxQuantity)
-    : undefined,
+            req.user?.role === "admin" && req.body.maxQuantity !== undefined
+              ? Number(req.body.maxQuantity)
+              : undefined,
 
           createdBy: req.user?.id,
           createdByRole: req.user?.role,

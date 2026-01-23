@@ -62,7 +62,10 @@ export const createReturn = async (req, res) => {
 /* GET ALL RETURNS*/
 export const getAllReturns = async (req, res) => {
   try {
-    const returns = await Return.find().sort({ createdAt: -1 });
+    const returns = await Return.find()
+    .populate("returnedFrom", "name")
+    .sort({ createdAt: -1 });
+    
 
     const formatted = returns.map(r => ({
       _id: r._id,
@@ -144,11 +147,11 @@ export const moveReturnToFitting = async (req, res) => {
       });
     }
 
-    if (returnItem.category !== "Functional") {
-      return res.status(400).json({
-        message: "Only Functional items can be sent to fitting",
-      });
-    }
+    // if (returnItem.category !== "Functional") {
+    //   return res.status(400).json({
+    //     message: "Only Functional items can be sent to fitting",
+    //   });
+    // }
 
     returnItem.status = "In-Fitting";
     await returnItem.save();
