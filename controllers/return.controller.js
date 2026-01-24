@@ -2,6 +2,8 @@ import Return from "../models/return.model.js";
 import Inventory from "../models/inventory.model.js";
 import Order from "../models/order.model.js";
 import BadReturn from "../models/badReturn.model.js";
+import User from "../models/User.model.js";
+import ProductionInward from "../models/productionInward.model.js";
 /**
  * CREATE RETURN ORDER
  * POST /api/returns
@@ -23,6 +25,12 @@ export const createReturn = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
+
+    if (order.status !== "Dispatched") {
+      return res.status(400).json({
+        message: "Return allowed only for dispatched orders",
+      })
+    }
     // 2️⃣ Prevent duplicate returns
     const exists = await Return.findOne({ orderId });
     if (exists) {
@@ -62,32 +70,41 @@ export const createReturn = async (req, res) => {
 /* GET ALL RETURNS*/
 export const getAllReturns = async (req, res) => {
   try {
-    const returns = await Return.find()
-    .populate("returnedFrom", "name")
-    .sort({ createdAt: -1 });
-    
+    const { status } = req.query;
+
+    const filter = {};
+
+    // Apply status filter if provided
+    if (status) {
+      filter.status = status;
+    }
+
+    const returns = await Return.find(filter)
+      .populate("returnedFrom", "name")
+      .sort({ createdAt: -1 });
 
     const formatted = returns.map(r => ({
       _id: r._id,
       orderId: r.orderId,
       chairType: r.chairType,
       quantity: r.quantity,
-      returnedFrom: r.returnedFrom,   // Mansi
+      returnedFrom: r.returnedFrom,
       deliveryDate: r.deliveryDate,
       returnDate: r.returnDate,
       category: r.category,
-      status: r.status, 
-      movedToInventory: r.movedToInventory
+      status: r.status,
     }));
 
     res.status(200).json({
       success: true,
       data: formatted
     });
+
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 
 /**
@@ -165,72 +182,110 @@ export const moveReturnToFitting = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 export const fittingDecision = async (req, res) => {
   try {
-    const { decision, remarks, inventoryType } = req.body;
+    const { decision, remarks, inventoryType, assignedTo } = req.body;
 
     const returnItem = await Return.findById(req.params.id);
     if (!returnItem) {
       return res.status(404).json({ message: "Return not found" });
     }
 
-   if (["Accepted", "Rejected"].includes(returnItem.status)) {
-  return res.status(400).json({
-    message: "Return already processed",
-  });
-}
+    // ✅ Prevent reprocessing
+    // 🔒 STRICT lifecycle check
+    if (returnItem.status !== "In-Fitting") {
+      return res.status(400).json({
+        message: `Return cannot be processed. Current status: ${returnItem.status}`,
+      });
+    }
 
 
-    // ✅ Update return status
-    returnItem.status = decision;
-    returnItem.fittingDecision = decision;
+    /* ================= REJECT ================= */
+    if (decision === "Rejected") {
+      returnItem.status = "Rejected";
+      returnItem.fittingDecision = "Rejected";
+      returnItem.fittingRemarks = remarks || "";
+      await returnItem.save();
+
+      return res.json({
+        success: true,
+        message: "Return rejected successfully",
+      });
+    }
+
+    /* ================= ACCEPT FLOW ================= */
+    if (decision !== "Accepted") {
+      return res.status(400).json({
+        message: "Invalid decision",
+      });
+    }
+
+    if (!inventoryType) {
+      return res.status(400).json({
+        message: "Select GOOD or BAD",
+      });
+    }
+
+    returnItem.fittingDecision = "Accepted";
     returnItem.fittingRemarks = remarks || "";
-    await returnItem.save();
 
-    // ✅ Inventory update ONLY if accepted
-    if (decision === "Accepted") {
+    /* ================= BAD ================= */
+    if (inventoryType === "BAD") {
+      returnItem.status = "Bad-Inventory";
+      await returnItem.save();
 
-  /* ✅ GOOD → ADD TO INVENTORY */
-  if (inventoryType === "GOOD") {
-    await Inventory.findOneAndUpdate(
-      {
-        partName: returnItem.chairType,
-        type: "SPARE",
-        location: "WAREHOUSE",
-      },
-      {
-        $inc: { quantity: returnItem.quantity },
-        $setOnInsert: {
-          partName: returnItem.chairType,
-          type: "SPARE",
-          location: "WAREHOUSE",
+      // prevent duplicate bad entry
+      const exists = await BadReturn.findOne({ orderId: returnItem.orderId });
+      if (!exists) {
+        await BadReturn.create({
+          orderId: returnItem.orderId,
+          chairType: returnItem.chairType,
+          quantity: returnItem.quantity,
+          reason: remarks,
+          returnedFrom: returnItem.returnedFrom,
           createdBy: req.user.id,
-          createdByRole: req.user.role,
-        },
-      },
-      { upsert: true }
-    );
-  }
+        });
+      }
 
-  /* ❌ BAD → STORE SEPARATELY */
-  if (inventoryType === "BAD") {
-    await BadReturn.create({
-      orderId: returnItem.orderId,
-      chairType: returnItem.chairType,
-      quantity: returnItem.quantity,
-      reason: returnItem.fittingRemarks,
-      returnedFrom: returnItem.returnedFrom,
-      createdBy: req.user.id,
-    });
-  }
-}
+      return res.json({
+        success: true,
+        message: "Marked as bad inventory",
+      });
+    }
 
+    /* ================= GOOD ================= */
+    if (inventoryType === "GOOD") {
 
-    res.status(200).json({
-      success: true,
-      message: "Fitting decision processed successfully",
-    });
+      if (!assignedTo) {
+        return res.status(400).json({
+          message: "Warehouse staff must be assigned",
+        });
+      }
+
+      const warehouseUser = await User.findById(assignedTo);
+      if (!warehouseUser || warehouseUser.role !== "warehouse") {
+        return res.status(400).json({
+          message: "Invalid warehouse user",
+        });
+      }
+
+      returnItem.status = "Accepted";
+      await returnItem.save();
+
+      await ProductionInward.create({
+        partName: returnItem.chairType,
+        quantity: returnItem.quantity,
+        assignedTo,
+        createdBy: req.user.id,
+        status: "PENDING",
+      });
+
+      return res.json({
+        success: true,
+        message: "Return sent to warehouse for approval",
+      });
+    }
+
   } catch (error) {
     console.error("Fitting decision error:", error);
     res.status(500).json({ message: error.message });

@@ -53,9 +53,16 @@ const returnSchema = new mongoose.Schema(
 },
 status: {
   type: String,
-  enum: ["Pending", "In-Fitting", "Accepted", "Rejected"],
+  enum: [
+    "Pending",
+    "In-Fitting",
+    "Accepted",
+    "Rejected",
+    "Bad-Inventory"
+  ],
   default: "Pending",
 },
+
 fittingDecision: {
   type: String,
   enum: ["Accepted", "Rejected"],
