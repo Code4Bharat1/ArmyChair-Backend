@@ -300,6 +300,7 @@ export const updateOrderProgress = async (req, res) => {
         "WAREHOUSE_COLLECTED",
         "FITTING_IN_PROGRESS",
         "FITTING_COMPLETED",
+        "READY_FOR_DISPATCH",
         "DISPATCHED",
         "PARTIAL",
       ];

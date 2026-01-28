@@ -2,21 +2,25 @@ import WorkSession from "../models/workSession.model.js";
 import { logActivity } from "../utils/logActivity.js";
 
 export const startWork = async (req, res) => {
-  const { module } = req.body;
+  const  module  = "STAFF_PANEL";
 
-  await WorkSession.findOneAndUpdate(
-    { user: req.user.id, module },
-    { startedAt: new Date(), lastActive: new Date(), isPaused: false },
-    { upsert: true }
-  );
+ await WorkSession.findOneAndUpdate(
+  { user: req.user.id,},
+  {
+    $setOnInsert: { startedAt: new Date() },
+    lastActive: new Date(),
+    isPaused: false,
+    module:"STAFF_PANEL",
+  },
+  { upsert: true, new: true }
+);
 
   res.json({ success: true });
 };
 
 export const tickWork = async (req, res) => {
-  const { module } = req.body;
 
-  const session = await WorkSession.findOne({ user: req.user.id, module });
+  const session = await WorkSession.findOne({ user: req.user.id,});
   if (!session || session.isPaused) return res.json({ success: true });
 
   session.totalSeconds += 30;
@@ -27,9 +31,8 @@ export const tickWork = async (req, res) => {
 };
 
 export const pauseWork = async (req, res) => {
-  const { module } = req.body;
 
-  const session = await WorkSession.findOne({ user: req.user.id, module });
+  const session = await WorkSession.findOne({ user: req.user.id, });
   if (!session) return res.json({ success: true });
 
   session.isPaused = true;
@@ -41,7 +44,7 @@ export const pauseWork = async (req, res) => {
 
   await logActivity(req, {
     action: "WORK_TIME",
-    module,
+    module: "STAFF_PANEL",
     description: `Worked ${hrs}h ${mins}m`,
   });
 

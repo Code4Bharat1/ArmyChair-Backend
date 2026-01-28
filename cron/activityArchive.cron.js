@@ -15,7 +15,6 @@ start.setHours(0, 0, 0, 0);
 const end = new Date(start);
 end.setDate(start.getDate() + 1);
 
-
     try {
       // 1️⃣ Fetch today's logs
       const logs = await ActivityLog.find({
@@ -28,17 +27,19 @@ end.setDate(start.getDate() + 1);
         return;
       }
 
-      // 2️⃣ Backup to MongoDB (SAFETY)
+     // 2️⃣ Export to Excel (ARCHIVE)
+      await exportActivityLogsToExcel(start);
+
+    // 3️⃣ Backup to MongoDB (SAFETY)
       await ActivityLogBackup.create({
         date: start.toISOString().split("T")[0],
         logs,
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       });
 
-      // 3️⃣ Export to Excel (ARCHIVE)
-      await exportActivityLogsToExcel(start);
 
-      // 4️⃣ Soft delete logs
+
+    // 4️⃣ Soft delete logs
       await ActivityLog.deleteMany({
   createdAt: { $gte: start, $lt: end }
 });

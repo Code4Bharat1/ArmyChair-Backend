@@ -66,11 +66,14 @@ export const getOrderPickData = async (req, res) => {
   }
 };
 
+
 export const dispatchOrderParts = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
+    // console.log("REQ BODY:", req.body);
+
     const { orderId, items } = req.body;
 
     if (!orderId || !items || !items.length) {
@@ -79,64 +82,74 @@ export const dispatchOrderParts = async (req, res) => {
         .json({ success: false, message: "Invalid payload" });
     }
 
+    // 1️⃣ Get Order
     const order = await Order.findById(orderId).session(session);
     if (!order) throw new Error("Order not found");
 
+    // 2️⃣ Prevent duplicate warehouse processing
     if (!["ORDER_PLACED", "PARTIAL"].includes(order.progress)) {
       throw new Error("Order already processed by warehouse");
     }
 
+    // 3️⃣ Process each inventory item safely
     for (const item of items) {
       const stock = await Inventory.findById(item.inventoryId).session(session);
+      if (!stock) throw new Error(`Inventory not found: ${item.inventoryId}`);
 
-     if (!stock) {
-  throw new Error("Inventory not found");
-}
-
-// If it's a spare order → must use SPARE items
-if (order.orderType === "SPARE" && stock.type !== "SPARE") {
-  throw new Error("Invalid spare inventory item");
-}
-
-// If it's a full order → allow chair components
-if (order.orderType === "FULL" && stock.type === "FULL") {
-  throw new Error("Cannot deduct full chair stock for build process");
-}
-
-
-      if (stock.quantity < item.qty) {
-        throw new Error(
-          `Not enough stock at ${stock.location} for ${stock.chairType}`,
-        );
+      // Spare vs Full order validation
+      if (order.orderType === "SPARE" && stock.type !== "SPARE") {
+        throw new Error(`Invalid spare inventory item: ${stock.partName}`);
       }
 
-      stock.quantity -= item.qty;
-      await stock.save({ session });
+      if (order.orderType === "FULL" && stock.type === "FULL") {
+        throw new Error("Cannot deduct full chair stock for build process");
+      }
+
+      // 4️⃣ Atomic stock deduction with race condition protection
+      const result = await Inventory.updateOne(
+        { _id: item.inventoryId, quantity: { $gte: item.qty } },
+        { $inc: { quantity: -item.qty } },
+        { session }
+      );
+
+      if (result.modifiedCount === 0) {
+        throw new Error(`Not enough stock for ${stock.partName}`);
+      }
     }
 
+    // 5️⃣ Update order progress
     order.progress = "WAREHOUSE_COLLECTED";
     await order.save({ session });
 
+    // 6️⃣ Commit transaction
     await session.commitTransaction();
     session.endSession();
-await logActivity(req, {
-  action: "WAREHOUSE_COLLECT",
-  module: "Order",
-  entityType: "Order",
-  entityId: order._id,
-  description: `Collected spare parts for order ${order.orderId}`,
-});
 
-    res.json({ success: true, message: "Parts sent to fitting" });
+    // 7️⃣ Activity log
+    await logActivity(req, {
+      action: "WAREHOUSE_COLLECT",
+      module: "Order",
+      entityType: "Order",
+      entityId: order._id,
+      description: `Collected spare parts for order ${order.orderId}`,
+    });
+
+    return res.json({
+      success: true,
+      message: "Parts successfully dispatched to fitting",
+    });
   } catch (err) {
     await session.abortTransaction();
     session.endSession();
 
     console.error("Dispatch Error:", err);
-    res.status(400).json({ success: false, message: err.message });
+
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
-
 export const acceptProductionInward = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();

@@ -9,6 +9,6 @@ const workSessionSchema = new mongoose.Schema({
   isPaused: { type: Boolean, default: false },
 }, { timestamps: true });
 
-workSessionSchema.index({ user: 1, module: 1 }, { unique: true });
+workSessionSchema.index({ user: 1 }, { unique: true });
 
 export default mongoose.model("WorkSession", workSessionSchema);

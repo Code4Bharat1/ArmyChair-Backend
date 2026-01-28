@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import XLSX from "xlsx";
+import  XLSX from "xlsx";
 
 export const appendActivityToExcel = (log) => {
   const date = new Date(log.createdAt).toISOString().split("T")[0];
