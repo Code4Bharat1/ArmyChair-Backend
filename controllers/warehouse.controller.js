@@ -162,21 +162,25 @@ export const acceptProductionInward = async (req, res) => {
 
     /* ================= ADD / MERGE SPARE INVENTORY ================= */
     await Inventory.findOneAndUpdate(
-      {
-        chairType: inward.partName,
-        location: inward.location || "A",
-        type: "SPARE",
-      },
-      {
-        $inc: { quantity: inward.quantity },
-        $setOnInsert: {
-          createdBy: inward.createdBy, // ✅ production USER
-          createdByRole: "production", // ✅ role
-          priority: "high",
-        },
-      },
-      { upsert: true },
-    );
+  {
+    partName: inward.partName, // ✅ FIXED
+    location: inward.location || "A",
+    type: "SPARE",
+  },
+  {
+    $inc: { quantity: inward.quantity },
+    $setOnInsert: {
+      partName: inward.partName, // ✅ MUST SET
+      type: "SPARE",
+      location: inward.location || "A",
+      createdBy: inward.createdBy,
+      createdByRole: "production",
+      maxQuantity: 0,
+    },
+  },
+  { upsert: true, new: true, session },
+);
+
 
     /* ================= UPDATE INWARD ================= */
     inward.status = "ACCEPTED";

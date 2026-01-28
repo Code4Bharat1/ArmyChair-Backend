@@ -1,3 +1,4 @@
+//order controller
 import csv from "csvtojson";
 import mongoose from "mongoose";
 import Order from "../models/order.model.js";
@@ -299,9 +300,10 @@ export const updateOrderProgress = async (req, res) => {
         "WAREHOUSE_COLLECTED",
         "FITTING_IN_PROGRESS",
         "FITTING_COMPLETED",
-        "READY_FOR_DISPATCH",
+        "DISPATCHED",
         "PARTIAL",
       ];
+
 
       if (!allowedWarehouse.includes(progress)) {
         return res.status(403).json({
