@@ -25,12 +25,12 @@ export const createReturn = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
+if (order.progress !== "DISPATCHED") {
+  return res.status(400).json({
+    message: "Return allowed only for dispatched orders",
+  });
+}
 
-    if (order.status !== "Dispatched") {
-      return res.status(400).json({
-        message: "Return allowed only for dispatched orders",
-      })
-    }
     // 2️⃣ Prevent duplicate returns
     const exists = await Return.findOne({ orderId });
     if (exists) {
