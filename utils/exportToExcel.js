@@ -23,10 +23,11 @@ export const exportActivityLogsToExcel = async (date) => {
     Number(dayPart) + 1,
     0, 0, 0, 0
   );
+const logs = await ActivityLog.find({
+  createdAt: { $gte: start, $lt: end },
+  action: { $ne: "WORK_TIME" }   // 👈 exclude work time
+}).sort({ createdAt: 1 });
 
-  const logs = await ActivityLog.find({
-    createdAt: { $gte: start, $lt: end },
-  }).sort({ createdAt: 1 });
 
   if (!logs.length) return null;
 
