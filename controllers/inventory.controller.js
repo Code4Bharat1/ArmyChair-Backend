@@ -61,7 +61,34 @@ export const createInventory = async (req, res) => {
       inventoryData.maxQuantity = Number(maxQuantity);
     }
 
-    const inventory = await Inventory.create(inventoryData);
+    const inventory = await Inventory.findOneAndUpdate(
+  {
+    chairType,
+    location,
+    type: "FULL",
+  },
+  {
+    $inc: { quantity: Number(quantity) }, // ✅ ADD quantity
+    $setOnInsert: {
+      chairType,
+      vendor,
+      location,
+      type: "FULL",
+      minQuantity: Number(minQuantity),
+      maxQuantity:
+        req.user?.role === "admin" && maxQuantity !== undefined
+          ? Number(maxQuantity)
+          : 0,
+      createdBy: req.user?.id,
+      createdByRole: req.user?.role,
+    },
+  },
+  {
+    new: true,
+    upsert: true, // 🔥 THIS is the key
+  }
+);
+
 
     res.status(201).json({
       message: "Inventory item added successfully",
