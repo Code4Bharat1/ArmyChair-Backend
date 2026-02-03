@@ -19,11 +19,11 @@ const orderSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-orderType: {
-  type: String,
-  enum: ["FULL", "SPARE"],
-  default: "FULL",
-},
+    orderType: {
+      type: String,
+      enum: ["FULL", "SPARE"],
+      default: "FULL",
+    },
 
     orderDate: {
       type: Date,
@@ -45,20 +45,22 @@ orderType: {
       type: Boolean,
       default: false,
     },
+progress: {
+  type: String,
+  enum: [
+    "ORDER_PLACED",
+    "PRODUCTION_PENDING",
+    "PRODUCTION_IN_PROGRESS",   // 👈 ADD THIS
+    "PRODUCTION_COMPLETED",
+    "WAREHOUSE_COLLECTED",
+    "FITTING_IN_PROGRESS",
+    "FITTING_COMPLETED",
+    "READY_FOR_DISPATCH",
+    "DISPATCHED",
+    "PARTIAL",
+  ],
+},
 
-    progress: {
-      type: String,
-      enum: [
-        "ORDER_PLACED",
-        "WAREHOUSE_COLLECTED",
-        "FITTING_IN_PROGRESS",
-        "FITTING_COMPLETED",
-        "READY_FOR_DISPATCH",
-        "DISPATCHED",
-        "PARTIAL", // ✅ REQUIRED ADDITION
-      ],
-      default: "ORDER_PLACED",
-    },
 
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -71,22 +73,35 @@ orderType: {
       ref: "User",
       required: true,
     },
+    productionWorker: {
+  type: String, // just store worker name
+},
+
+productionAssignedAt: {
+  type: Date,
+},
+
+productionCompletedAt: {
+  type: Date,
+},
+
     partialAccepted: {
-  type: Boolean,
-  default: false,
-},
+      type: Boolean,
+      default: false,
+    },
 
-partialBuildableQty: {
-  type: Number,
-  default: 0,
-},
+    partialBuildableQty: {
+      type: Number,
+      default: 0,
+    },
 
-partialParts: [
-  {
-    inventoryId: { type: mongoose.Schema.Types.ObjectId, ref: "Inventory" },
-    qty: Number,
-  },
-],
+    partialParts: [
+      {
+        inventoryId: { type: mongoose.Schema.Types.ObjectId, ref: "Inventory" },
+        qty: Number,
+      },
+    ],
+    
 
   },
   { timestamps: true }

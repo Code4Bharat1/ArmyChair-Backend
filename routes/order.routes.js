@@ -10,6 +10,8 @@ import {
   staffPerformanceAnalytics,
   productAnalytics,
   uploadOrders,
+  assignProductionWorker,
+  acceptProductionOrder,
   
 } from "../controllers/order.controller.js";
 
@@ -33,6 +35,18 @@ router.post(
   upload.array("files"),
   uploadOrders
 );
+router.put(
+  "/:id/assign-production",
+  protect,
+  
+  assignProductionWorker
+);
+router.post(
+  "/:id/production-accept",
+  protect,
+  acceptProductionOrder
+);
+
 
 router.get("/analytics/staff", protect, staffPerformanceAnalytics);
 router.get("/by-order-id/:orderId", protect, getOrderByOrderId);

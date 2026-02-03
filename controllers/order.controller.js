@@ -28,6 +28,13 @@ const createOrderInternal = async ({ row, user }) => {
     const vendor = await createVendor(dispatchedTo);
     vendorId = vendor._id;
   }
+  let initialProgress;
+
+  if (orderType === "FULL") {
+    initialProgress = "PRODUCTION_PENDING";
+  } else {
+    initialProgress = "ORDER_PLACED";
+  }
 
   const creatorId = user.id || user._id;
   const assignedSalesPerson =
@@ -43,8 +50,9 @@ const createOrderInternal = async ({ row, user }) => {
     isPartial: false,
     createdBy: creatorId,
     salesPerson: assignedSalesPerson,
-    progress: "ORDER_PLACED",
+    progress: initialProgress, // 👈 changed
   });
+
 };
 
 /* ================= CREATE ORDER ================= */
@@ -275,6 +283,9 @@ export const updateOrderProgress = async (req, res) => {
 
     const allowed = [
       "ORDER_PLACED",
+      "PRODUCTION_PENDING",
+  "PRODUCTION_IN_PROGRESS",
+  "PRODUCTION_COMPLETED",
       "WAREHOUSE_COLLECTED",
       "FITTING_IN_PROGRESS",
       "FITTING_COMPLETED",
@@ -287,14 +298,30 @@ export const updateOrderProgress = async (req, res) => {
       return res.status(400).json({ message: "Invalid progress" });
     }
 
-    // 🔐 SALES RULES
+    // SALES RULES
     if (role === "sales" && progress !== "DISPATCHED") {
       return res.status(403).json({
         message: "Sales can only dispatch orders",
       });
     }
 
-    // 🔐 WAREHOUSE RULES
+    // PRODUCTION RULES
+    if (role === "production") {
+      const allowedProduction = [
+  "PRODUCTION_PENDING",
+  "PRODUCTION_IN_PROGRESS",
+  "PRODUCTION_COMPLETED",
+];
+
+
+      if (!allowedProduction.includes(progress)) {
+        return res.status(403).json({
+          message: "Invalid production action",
+        });
+      }
+    }
+
+    // WAREHOUSE RULES
     if (role === "warehouse") {
       const allowedWarehouse = [
         "WAREHOUSE_COLLECTED",
@@ -305,7 +332,6 @@ export const updateOrderProgress = async (req, res) => {
         "PARTIAL",
       ];
 
-
       if (!allowedWarehouse.includes(progress)) {
         return res.status(403).json({
           message: "Invalid warehouse action",
@@ -313,24 +339,36 @@ export const updateOrderProgress = async (req, res) => {
       }
     }
 
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      {
-        progress,
-        isPartial: progress === "PARTIAL",
-      },
-      { new: true },
-    );
+    // 🔥 FETCH ORDER FIRST
+    const order = await Order.findById(req.params.id);
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
 
+    // 🚨 Production completion validation
+    if (progress === "PRODUCTION_COMPLETED") {
+      if (!order.productionWorker) {
+        return res.status(400).json({
+          message: "Assign production worker before completing",
+        });
+      }
+
+      order.productionCompletedAt = new Date();
+    }
+
+    order.progress = progress;
+    order.isPartial = progress === "PARTIAL";
+
+    await order.save();
+
     res.status(200).json({ success: true, order });
+
   } catch (error) {
     res.status(500).json({ message: "Status update failed" });
   }
 };
+
 
 /* ================= DELETE ORDER ================= */
 export const deleteOrder = async (req, res) => {
@@ -515,3 +553,146 @@ export const uploadOrders = async (req, res) => {
     });
   }
 };
+export const assignProductionWorker = async (req, res) => {
+  try {
+    const { workerName } = req.body;
+
+    if (!workerName) {
+      return res.status(400).json({
+        message: "Worker name is required",
+      });
+    }
+
+    // 🔥 FETCH ORDER FIRST
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({
+        message: "Order not found",
+      });
+    }
+
+    if (order.progress !== "PRODUCTION_PENDING") {
+      return res.status(400).json({
+        message: "Order is not in production stage",
+      });
+    }
+
+    // ✅ Now safe to check this
+    if (order.productionWorker) {
+      return res.status(400).json({
+        message: "Worker already assigned",
+      });
+    }
+
+    order.productionWorker = workerName;
+    order.productionAssignedAt = new Date();
+
+    await order.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Worker assigned successfully",
+      order,
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+import Inventory from "../models/inventory.model.js"; // make sure this exists
+
+export const acceptProductionOrder = async (req, res) => {
+  try {
+    const { parts } = req.body;
+
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (!order.productionWorker) {
+      return res.status(400).json({
+        message: "Assign worker before accepting",
+      });
+    }
+
+    if (
+      order.progress !== "PRODUCTION_PENDING" &&
+      order.progress !== "PRODUCTION_IN_PROGRESS"
+    ) {
+      return res.status(400).json({
+        message: "Order not in production stage",
+      });
+    }
+
+    if (!parts || Object.keys(parts).length === 0) {
+      return res.status(400).json({
+        message: "No parts selected",
+      });
+    }
+
+    const inventory = await Inventory.find({
+  type: "SPARE",
+  location: { $regex: "^PROD_" },
+});
+if (!inventory.length) {
+  return res.status(400).json({
+    message: "No production inventory available",
+  });
+}
+
+
+    // 🔥 VALIDATE + DEDUCT
+    for (const partName in parts) {
+      const qtyToUse = Number(parts[partName] || 0);
+      if (qtyToUse <= 0) continue;
+
+      const items = inventory.filter(
+        i =>
+          i.type === "SPARE" &&
+          i.partName &&
+          i.partName.trim().toLowerCase() === partName.trim().toLowerCase()
+      );
+
+      const totalAvailable = items.reduce(
+        (sum, i) => sum + i.quantity,
+        0
+      );
+
+      if (qtyToUse > totalAvailable) {
+        return res.status(400).json({
+          message: `Not enough ${partName}`,
+        });
+      }
+
+      // 🔥 Deduct from inventory documents
+      let remaining = qtyToUse;
+
+      for (const item of items) {
+        if (remaining <= 0) break;
+
+        const deduct = Math.min(item.quantity, remaining);
+        item.quantity -= deduct;
+        remaining -= deduct;
+
+        await item.save();
+      }
+    }
+
+    order.progress = "PRODUCTION_IN_PROGRESS";
+    await order.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Production materials issued successfully",
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Production accept failed" });
+  }
+};
+
+

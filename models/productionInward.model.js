@@ -2,21 +2,14 @@ import mongoose from "mongoose";
 
 const productionInwardSchema = new mongoose.Schema(
   {
-    partName: { type: String },
+    partName: { type: String, required: true },
 
     quantity: { type: Number, required: true, min: 1 },
 
-    // vendor: { type: String, required: true },
-
-    location: { type: String },
-
-    // color: { type: String, required: true },
-
-    // type: {
-    //   type: String,
-    //   enum: ["FULL", "SPARE"],
-    //   default: "SPARE",
-    // },
+    location: {
+      type: String,
+      required: true,
+    },
 
     status: {
       type: String,
@@ -26,18 +19,19 @@ const productionInwardSchema = new mongoose.Schema(
 
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User", // production
+      ref: "User",
       required: true,
     },
-assignedTo: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "User",
-  required: true,
-},
+
+    assignedTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
 
     approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User", // warehouse
+      ref: "User",
     },
   },
   { timestamps: true }

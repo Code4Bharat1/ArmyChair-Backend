@@ -9,6 +9,10 @@ const activityLogSchema = new mongoose.Schema(
 
     action: { type: String, required: true },
     module: { type: String, required: true },
+    quantity: {
+  type: Number,
+},
+
 
     entityType: { type: String },
     entityId: { type: mongoose.Schema.Types.ObjectId },

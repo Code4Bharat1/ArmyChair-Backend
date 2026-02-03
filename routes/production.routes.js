@@ -1,8 +1,10 @@
 import express from "express";
 import {
   addProductionInward,
-  getProductionInward, // 🔥 IMPORT
+  getProductionInward, 
+  getProductionStock
 } from "../controllers/production.controller.js";
+
 
 import { protect } from "../middlewares/auth.middleware.js";
 import { productionOnly } from "../middlewares/auth.middleware.js";
@@ -22,6 +24,12 @@ router.get(
   protect,
   productionOnly,
   getProductionInward
+);
+router.get(
+  "/stock",
+  protect,
+  productionOnly,
+  getProductionStock
 );
 
 export default router;

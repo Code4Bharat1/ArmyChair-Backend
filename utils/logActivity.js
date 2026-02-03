@@ -19,6 +19,7 @@ export const logActivity = async (req, payload) => {
     userRole,
     action: payload.action,
     module: payload.module,
+    quantity: payload.quantity || 0,
     entityType: payload.entityType,
     entityId: payload.entityId,
     description: payload.description,
