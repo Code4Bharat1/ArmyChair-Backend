@@ -167,56 +167,60 @@ export const acceptProductionInward = async (req, res) => {
     }
 
     // 1️⃣ Find warehouse stock (exclude production locations)
-   // 1️⃣ Find warehouse stock
-const warehouseStock = await Inventory.findOne({
-  partName: { $regex: new RegExp(`^${inward.partName}$`, "i") },
-  type: "SPARE",
-  location: { $not: /^PROD_/ },
-}).session(session);
-
-if (!warehouseStock) throw new Error("Warehouse stock not found");
-if (warehouseStock.quantity < inward.quantity)
-  throw new Error("Not enough warehouse stock");
-
-// 2️⃣ Deduct
-warehouseStock.quantity -= inward.quantity;
-await warehouseStock.save({ session });
-
-// 3️⃣ Add to production
-await Inventory.findOneAndUpdate(
-  {
-    partName: inward.partName,
-    type: "SPARE",
-    location: inward.location,
-  },
-  {
-    $inc: { quantity: inward.quantity },
-    $setOnInsert: {
+    // 1️⃣ Find warehouse stock
+    const warehouseStock = await Inventory.findOne({
       partName: inward.partName,
       type: "SPARE",
-      location: inward.location,
-    },
-  },
-  { upsert: true, session }
-);
+      locationType: "WAREHOUSE",
+      quantity: { $gte: inward.quantity }
+    })
+      .sort({ quantity: -1 })  // take highest stock
+      .session(session);
 
-// 4️⃣ Save movement (INSIDE TRANSACTION)
-await StockMovement.create(
-  [{
-    partName: inward.partName,
-    fromLocation: warehouseStock.location,
-    toLocation: inward.location,
-    quantity: inward.quantity,
-    movedBy: req.user.id,
-    reason: "TRANSFER",
-  }],
-  { session }
-);
 
-// 5️⃣ Update inward
-inward.status = "ACCEPTED";
-inward.approvedBy = req.user.id;
-await inward.save({ session });
+    if (!warehouseStock) throw new Error("Warehouse stock not found");
+    if (warehouseStock.quantity < inward.quantity)
+      throw new Error("Not enough warehouse stock");
+
+    // 2️⃣ Deduct
+    warehouseStock.quantity -= inward.quantity;
+    await warehouseStock.save({ session });
+
+    // 3️⃣ Add to production
+    await Inventory.findOneAndUpdate(
+      {
+        partName: inward.partName,
+        type: "SPARE",
+        location: inward.location,
+      },
+      {
+        $inc: { quantity: inward.quantity },
+        $setOnInsert: {
+          partName: inward.partName,
+          type: "SPARE",
+          location: inward.location,
+        },
+      },
+      { upsert: true, session }
+    );
+
+    // 4️⃣ Save movement (INSIDE TRANSACTION)
+    await StockMovement.create(
+      [{
+        partName: inward.partName,
+        fromLocation: warehouseStock.location,
+        toLocation: inward.location,
+        quantity: inward.quantity,
+        movedBy: req.user.id,
+        reason: "TRANSFER",
+      }],
+      { session }
+    );
+
+    // 5️⃣ Update inward
+    inward.status = "ACCEPTED";
+    inward.approvedBy = req.user.id;
+    await inward.save({ session });
 
 
     await session.commitTransaction();

@@ -32,6 +32,11 @@ const inventorySchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+locationType: {
+  type: String,
+  enum: ["WAREHOUSE", "PRODUCTION", "FITTING"],
+  required: true,
+},
 
     vendor: {
       type: mongoose.Schema.Types.ObjectId,

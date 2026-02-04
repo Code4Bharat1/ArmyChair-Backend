@@ -15,20 +15,20 @@ const router = express.Router();
 router.post(
   "/inward",
   protect,
-  productionOnly,
+  
   addProductionInward
 );
 
 router.get(
   "/inward",
   protect,
-  productionOnly,
+  
   getProductionInward
 );
 router.get(
   "/stock",
   protect,
-  productionOnly,
+  
   getProductionStock
 );
 

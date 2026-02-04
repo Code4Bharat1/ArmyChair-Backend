@@ -309,11 +309,21 @@ export const createSpareParts = async (req, res) => {
 //get all spare parts
 export const getSpareParts = async (req, res) => {
   try {
-    const parts = await Inventory.find({
-  type: "SPARE",
-  location: { $not: /^PROD_/ }   // exclude production locations
-})
+    let filter = { type: "SPARE" };
 
+    if (req.user.role === "warehouse") {
+      filter.locationType = "WAREHOUSE";
+    }
+
+    if (req.user.role === "fitting") {
+      filter.locationType = "FITTING";
+    }
+
+    if (req.user.role === "production") {
+      filter.locationType = "PRODUCTION";
+    }
+
+    const parts = await Inventory.find(filter)
       .populate("createdBy", "name role")
       .sort({ createdAt: -1 });
 

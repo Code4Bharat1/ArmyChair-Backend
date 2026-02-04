@@ -13,7 +13,7 @@ router.patch("/update/:id", protect, updateInventory);
 
 // Spare Parts 
 router.post("/spare-parts", protect ,createSpareParts);
-router.get("/spare-parts", getSpareParts);
+router.get("/spare-parts",protect, getSpareParts);
 router.patch("/spare-parts/update/:id", protect, updateSparePart);
 router.delete("/spare-parts/delete/:id",protect, deleteSparePart);
 
