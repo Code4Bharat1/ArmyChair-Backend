@@ -40,6 +40,13 @@ const orderSchema = new mongoose.Schema(
       required: true,
       min: 1,
     },
+    
+    lastAmendedAt: Date,
+amendedBy: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "User",
+},
+
 
     isPartial: {
       type: Boolean,

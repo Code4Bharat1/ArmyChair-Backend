@@ -12,6 +12,7 @@ import {
   uploadOrders,
   assignProductionWorker,
   acceptProductionOrder,
+  preDispatchEdit,
   
 } from "../controllers/order.controller.js";
 
@@ -46,7 +47,11 @@ router.post(
   protect,
   acceptProductionOrder
 );
-
+router.patch(
+  "/:id/pre-dispatch-edit",
+  protect,
+  preDispatchEdit
+);
 
 router.get("/analytics/staff", protect, staffPerformanceAnalytics);
 router.get("/by-order-id/:orderId", protect, getOrderByOrderId);

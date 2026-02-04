@@ -695,4 +695,69 @@ if (!inventory.length) {
   }
 };
 
+export const preDispatchEdit = async (req, res) => {
+  try {
+    const { dispatchedTo, orderDate, deliveryDate } = req.body;
+
+    const order = await Order.findById(req.params.id)
+      .populate("dispatchedTo", "name");
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (order.progress !== "READY_FOR_DISPATCH") {
+      return res.status(400).json({
+        message: "Only orders ready for dispatch can be amended",
+      });
+    }
+
+    const oldValues = {
+      dispatchedTo: order.dispatchedTo?.name,
+      orderDate: order.orderDate,
+      deliveryDate: order.deliveryDate,
+    };
+
+    if (dispatchedTo) {
+  if (mongoose.Types.ObjectId.isValid(dispatchedTo)) {
+    order.dispatchedTo = dispatchedTo;
+  } else {
+    const vendor = await createVendor(dispatchedTo);
+    order.dispatchedTo = vendor._id;
+  }
+}
+
+    if (orderDate) order.orderDate = orderDate;
+    if (deliveryDate) order.deliveryDate = deliveryDate;
+
+    order.lastAmendedAt = new Date();
+    order.amendedBy = req.user.id;
+
+    await order.save();
+
+    // 🔔 Admin activity log (you already use this)
+    await logActivity(req, {
+      action: "ORDER_AMENDED_PRE_DISPATCH",
+      module: "Order",
+      entityType: "Order",
+      entityId: order._id,
+      description: `Order ${order.orderId} amended before dispatch`,
+      meta: {
+        before: oldValues,
+        after: { dispatchedTo, orderDate, deliveryDate },
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Order updated before dispatch",
+      order,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Pre-dispatch edit failed" });
+  }
+};
+
+
 
