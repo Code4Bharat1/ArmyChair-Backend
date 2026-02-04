@@ -6,68 +6,114 @@ import { logActivity } from "../utils/logActivity.js";
 import Inventory from "../models/inventory.model.js";
 
 /* ================= ADD PRODUCTION INWARD ================= */
+/* ================= CREATE PRODUCTION REQUEST ================= */
 export const addProductionInward = async (req, res) => {
   try {
-    const { partName, quantity, assignedTo, location } = req.body;
+    const { partName, quantity, location } = req.body;
 
-    /* ================= VALIDATIONS ================= */
-
-    if (!partName || !quantity || !location || !assignedTo) {
+    if (!partName || !quantity || !location) {
       return res.status(400).json({
         success: false,
-        message: "partName, quantity, location and assignedTo are required",
+        message: "partName, quantity and production location are required",
       });
     }
 
-    if (!mongoose.Types.ObjectId.isValid(assignedTo)) {
+    const warehouseUser = await User.findOne({ role: "warehouse" });
+
+    if (!warehouseUser) {
       return res.status(400).json({
         success: false,
-        message: "Invalid warehouse user ID",
+        message: "No warehouse user found",
       });
     }
 
-    const warehouseUser = await User.findById(assignedTo);
-
-    if (!warehouseUser || warehouseUser.role !== "warehouse") {
-      return res.status(400).json({
-        success: false,
-        message: "Assigned user must be warehouse staff",
-      });
-    }
-
-    /* ================= CREATE INWARD ================= */
-
-    const inward = await ProductionInward.create({
+    const request = await ProductionInward.create({
       partName,
       quantity: Number(quantity),
-      location, // 🔥 PRODUCTION LOCATION (VERY IMPORTANT)
-      assignedTo,
+      location,
+      assignedTo: warehouseUser._id,
       createdBy: req.user.id,
       status: "PENDING",
     });
 
-    /* ================= ACTIVITY LOG ================= */
-
-    await logActivity(req, {
-      action: "PRODUCTION_INWARD_CREATED",
-      module: "Production",
-      entityType: "ProductionInward",
-      entityId: inward._id,
-      description: `Production submitted inward: ${partName} | Qty: ${quantity} | Location: ${location}`,
-      sourceLocation: location,
-      destination: "Warehouse Approval",
-    });
-
-    /* ================= RESPONSE ================= */
-
     res.status(201).json({
       success: true,
-      message: "Stock submitted to warehouse for approval",
-      data: inward,
+      message: "Material request sent to warehouse",
+      data: request,
     });
+
   } catch (err) {
-    console.error("ADD PRODUCTION INWARD ERROR:", err);
     res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+
+export const acceptProductionInward = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const inward = await ProductionInward.findById(req.params.id).session(session);
+
+    if (!inward || inward.status !== "PENDING") {
+      throw new Error("Invalid or already processed request");
+    }
+
+    if (String(inward.assignedTo) !== String(req.user.id)) {
+      throw new Error("You are not assigned to this request");
+    }
+
+    // 1️⃣ Check warehouse stock
+    const warehouseStock = await Inventory.findOne({
+  partName: inward.partName,
+  type: "SPARE",
+  location: { $not: /^PROD_/ }, // any non-production location
+  quantity: { $gte: inward.quantity },
+}).session(session);
+
+
+    if (!warehouseStock || warehouseStock.quantity < inward.quantity) {
+      throw new Error("Not enough stock in warehouse");
+    }
+
+    // 2️⃣ Deduct from warehouse
+    warehouseStock.quantity -= inward.quantity;
+    await warehouseStock.save({ session });
+
+    // 3️⃣ Add to production location
+    await Inventory.findOneAndUpdate(
+      {
+        partName: inward.partName,
+        location: inward.location, // PROD_Mintoo
+        type: "SPARE",
+      },
+      {
+        $inc: { quantity: inward.quantity },
+      },
+      { upsert: true, session }
+    );
+
+    // 4️⃣ Update request status
+    inward.status = "ACCEPTED";
+    inward.approvedBy = req.user.id;
+    await inward.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.json({
+      success: true,
+      message: "Material transferred to production successfully",
+    });
+
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+
+    res.status(400).json({
       success: false,
       message: err.message,
     });

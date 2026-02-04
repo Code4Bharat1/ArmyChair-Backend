@@ -2,7 +2,8 @@ import Order from "../models/order.model.js";
 import Inventory from "../models/inventory.model.js";
 import ProductionInward from "../models/productionInward.model.js";
 import mongoose from "mongoose";
-import Vendor from "../models/vendor.model.js";
+import StockMovement from "../models/stockMovement.model.js";
+
 import { logActivity } from "../utils/logActivity.js";
 export const getPendingProductionInward = async (req, res) => {
   try {
@@ -40,14 +41,14 @@ export const getOrderPickData = async (req, res) => {
     const grouped = {};
 
     for (const item of spareStock) {
-  if (!grouped[item.partName]) grouped[item.partName] = [];
+      if (!grouped[item.partName]) grouped[item.partName] = [];
 
-  grouped[item.partName].push({
-    inventoryId: item._id,
-    location: item.location,
-    available: item.quantity,
-  });
-}
+      grouped[item.partName].push({
+        inventoryId: item._id,
+        location: item.location,
+        available: item.quantity,
+      });
+    }
 
 
     const parts = Object.keys(grouped).map((partName) => ({
@@ -155,67 +156,87 @@ export const acceptProductionInward = async (req, res) => {
   session.startTransaction();
 
   try {
-    const inward = await ProductionInward.findById(req.params.id).session(
-      session,
-    );
+    const inward = await ProductionInward.findById(req.params.id).session(session);
 
     if (!inward || inward.status !== "PENDING") {
-      throw new Error("Invalid or already processed inward");
+      throw new Error("Invalid or already processed request");
     }
 
     if (String(inward.assignedTo) !== String(req.user.id)) {
-      throw new Error("You are not assigned to this inward");
+      throw new Error("You are not assigned to this request");
     }
 
-    /* ================= SYSTEM VENDOR ================= */
-    let vendor = await Vendor.findOne({ name: "Production" }).session(session);
-    if (!vendor) {
-      vendor = await Vendor.create([{ name: "Production" }], { session });
-    }
+    // 1️⃣ Find warehouse stock (exclude production locations)
+   // 1️⃣ Find warehouse stock
+const warehouseStock = await Inventory.findOne({
+  partName: { $regex: new RegExp(`^${inward.partName}$`, "i") },
+  type: "SPARE",
+  location: { $not: /^PROD_/ },
+}).session(session);
 
-    /* ================= ADD / MERGE SPARE INVENTORY ================= */
-    await Inventory.findOneAndUpdate(
+if (!warehouseStock) throw new Error("Warehouse stock not found");
+if (warehouseStock.quantity < inward.quantity)
+  throw new Error("Not enough warehouse stock");
+
+// 2️⃣ Deduct
+warehouseStock.quantity -= inward.quantity;
+await warehouseStock.save({ session });
+
+// 3️⃣ Add to production
+await Inventory.findOneAndUpdate(
   {
-    partName: inward.partName, // ✅ FIXED
-    location: inward.location || "A",
+    partName: inward.partName,
     type: "SPARE",
+    location: inward.location,
   },
   {
     $inc: { quantity: inward.quantity },
     $setOnInsert: {
-      partName: inward.partName, // ✅ MUST SET
+      partName: inward.partName,
       type: "SPARE",
-      location: inward.location || "A",
-      createdBy: inward.createdBy,
-      createdByRole: "production",
-      maxQuantity: 0,
+      location: inward.location,
     },
   },
-  { upsert: true, new: true, session },
+  { upsert: true, session }
 );
 
+// 4️⃣ Save movement (INSIDE TRANSACTION)
+await StockMovement.create(
+  [{
+    partName: inward.partName,
+    fromLocation: warehouseStock.location,
+    toLocation: inward.location,
+    quantity: inward.quantity,
+    movedBy: req.user.id,
+    reason: "TRANSFER",
+  }],
+  { session }
+);
 
-    /* ================= UPDATE INWARD ================= */
-    inward.status = "ACCEPTED";
-    inward.approvedBy = req.user.id;
-    await inward.save({ session });
+// 5️⃣ Update inward
+inward.status = "ACCEPTED";
+inward.approvedBy = req.user.id;
+await inward.save({ session });
+
 
     await session.commitTransaction();
     session.endSession();
+
     await logActivity(req, {
-      action: "PRODUCTION_INWARD_ACCEPTED",
+      action: "PRODUCTION_REQUEST_APPROVED",
       module: "Warehouse",
       entityType: "ProductionInward",
       entityId: inward._id,
-      description: `Accepted production inward ${inward.partName} qty ${inward.quantity}`,
-      sourceLocation: "Production",
-      destination: "Warehouse",
+      description: `Transferred ${inward.quantity} ${inward.partName} to ${inward.location}`,
+      sourceLocation: warehouseStock.location,
+      destination: inward.location,
     });
 
     res.json({
       success: true,
-      message: "Inventory added successfully",
+      message: "Stock transferred to production",
     });
+
   } catch (err) {
     await session.abortTransaction();
     session.endSession();
@@ -226,6 +247,9 @@ export const acceptProductionInward = async (req, res) => {
     });
   }
 };
+
+
+
 export const getOrderInventoryPreview = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -292,13 +316,13 @@ export const partialAcceptOrder = async (req, res) => {
     order.progress = "PARTIAL";
 
     await order.save();
-await logActivity(req, {
-  action: "PARTIAL_ACCEPT",
-  module: "Order",
-  entityType: "Order",
-  entityId: order._id,
-  description: `Partial accepted order ${order.orderId}, buildable qty ${buildable}`,
-});
+    await logActivity(req, {
+      action: "PARTIAL_ACCEPT",
+      module: "Order",
+      entityType: "Order",
+      entityId: order._id,
+      description: `Partial accepted order ${order.orderId}, buildable qty ${buildable}`,
+    });
 
     res.json({ success: true, message: "Partial saved successfully" });
   } catch (err) {
