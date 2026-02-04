@@ -159,12 +159,12 @@ export const getOrders = async (req, res) => {
         $lte: new Date(to),
       };
     }
+const orders = await Order.find(query)
+  .populate("createdBy", "name")
+  .populate("salesPerson", "name")   // 👈 ADD THIS
+  .populate("dispatchedTo", "name")
+  .sort({ createdAt: -1 });
 
-
-    const orders = await Order.find(query)
-      .populate("createdBy", "name")
-      .populate("dispatchedTo", "name")
-      .sort({ createdAt: -1 });
 
     res.json({ orders });
   } catch (err) {

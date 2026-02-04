@@ -1,7 +1,8 @@
 import Inventory from "../models/inventory.model.js";
 import Order from "../models/order.model.js";
+import User from "../models/User.model.js";
 
-/* ================= GET NOTIFICATIONS ================= */
+
 export const getNotifications = async (req, res) => {
   try {
     const notifications = [];
@@ -9,7 +10,7 @@ export const getNotifications = async (req, res) => {
     /* ================= FULL INVENTORY ================= */
     const fullItems = await Inventory.find({ type: "FULL" });
 
-    fullItems.forEach(item => {
+    fullItems.forEach((item) => {
       if (item.quantity === 0) {
         notifications.push({
           _id: `full-critical-${item._id}`,
@@ -17,11 +18,20 @@ export const getNotifications = async (req, res) => {
           message: `${item.chairType} (${item.color}) is out of stock`,
           redirectUrl: "/superadmin/inventory",
         });
-      } else if (item.quantity < item.minQuantity) {
+      } 
+      else if (item.quantity < item.minQuantity) {
         notifications.push({
           _id: `full-low-${item._id}`,
           title: "Low Stock Alert",
           message: `${item.chairType} (${item.color}) has only ${item.quantity} units`,
+          redirectUrl: "/superadmin/inventory",
+        });
+      } 
+      else if (item.maxQuantity && item.quantity > item.maxQuantity) {
+        notifications.push({
+          _id: `full-over-${item._id}`,
+          title: "Overstock Alert",
+          message: `${item.chairType} (${item.color}) exceeds max stock`,
           redirectUrl: "/superadmin/inventory",
         });
       }
@@ -33,7 +43,7 @@ export const getNotifications = async (req, res) => {
       maxQuantity: { $exists: true },
     });
 
-    spareItems.forEach(item => {
+    spareItems.forEach((item) => {
       const lowThreshold = Math.ceil(item.maxQuantity * 0.2);
 
       if (item.quantity === 0) {
@@ -43,18 +53,27 @@ export const getNotifications = async (req, res) => {
           message: `${item.partName} is out of stock`,
           redirectUrl: "/superadmin/spareparts",
         });
-      } else if (item.quantity < lowThreshold) {
+      } 
+      else if (item.quantity < lowThreshold) {
         notifications.push({
           _id: `spare-low-${item._id}`,
           title: "Low Spare Stock",
           message: `${item.partName} has only ${item.quantity} units`,
           redirectUrl: "/superadmin/spareparts",
         });
+      } 
+      else if (item.quantity > item.maxQuantity) {
+        notifications.push({
+          _id: `spare-over-${item._id}`,
+          title: "Overstock Alert",
+          message: `${item.partName} exceeds max stock`,
+          redirectUrl: "/superadmin/spareparts",
+        });
       }
     });
 
     /* ================= DELAYED ORDERS ================= */
-    const delayedOrders = await Order.find({
+       const delayedOrders = await Order.find({
       deliveryDate: { $lt: new Date() },
       progress: { $ne: "DISPATCHED" },
     });
@@ -91,18 +110,17 @@ export const getNotifications = async (req, res) => {
   }
 };
 
-/* ================= UNREAD COUNT ================= */
 export const getUnreadCount = async (req, res) => {
   try {
     let count = 0;
 
-    /* FULL INVENTORY */
+    /* ================= FULL INVENTORY ================= */
     const fullItems = await Inventory.find(
       { type: "FULL" },
       { quantity: 1, minQuantity: 1, maxQuantity: 1 }
     );
 
-    fullItems.forEach(item => {
+    fullItems.forEach((item) => {
       if (
         item.quantity === 0 ||
         item.quantity < item.minQuantity ||
@@ -112,14 +130,15 @@ export const getUnreadCount = async (req, res) => {
       }
     });
 
-    /* SPARE INVENTORY */
+    /* ================= SPARE INVENTORY ================= */
     const spareItems = await Inventory.find(
       { type: "SPARE", maxQuantity: { $exists: true } },
       { quantity: 1, maxQuantity: 1 }
     );
 
-    spareItems.forEach(item => {
+    spareItems.forEach((item) => {
       const lowThreshold = Math.ceil(item.maxQuantity * 0.2);
+
       if (
         item.quantity === 0 ||
         item.quantity < lowThreshold ||
@@ -129,22 +148,18 @@ export const getUnreadCount = async (req, res) => {
       }
     });
 
-    /* DELAYED ORDERS */
-    const delayedCount = await Order.countDocuments({
+    /* ================= DELAYED ORDERS ================= */
+    const orderCount = await Order.countDocuments({
       deliveryDate: { $lt: new Date() },
-      progress: { $ne: "DISPATCHED" },
-    });
-
-    /* AMENDED ORDERS */
-    const amendedCount = await Order.countDocuments({
-      lastAmendedAt: { $exists: true },
+      status: { $ne: "DELIVERED" },
     });
 
     res.json({
-      count: count + delayedCount + amendedCount,
+      count: count + orderCount,
     });
   } catch (error) {
     console.error("UNREAD COUNT ERROR:", error);
     res.status(500).json({ message: "Unread count failed" });
   }
 };
+
