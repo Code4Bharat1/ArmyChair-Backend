@@ -37,14 +37,10 @@ export const getDailySummary = async (req, res) => {
       return res.status(400).json({ message: "Date required" });
     }
 
-    const start = new Date(date);
-    const end = new Date(date);
-    end.setHours(23, 59, 59, 999);
-
     const sessions = await WorkSession.aggregate([
       {
         $match: {
-          createdAt: { $gte: start, $lte: end }
+          date: date   // 🔥 MATCH YOUR STORED DATE FIELD
         }
       },
       {
@@ -66,10 +62,13 @@ export const getDailySummary = async (req, res) => {
     ]);
 
     res.json({ success: true, data: sessions });
+
   } catch (err) {
+    console.error("DAILY SUMMARY ERROR:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 
 export const tickWork = async (req, res) => {

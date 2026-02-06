@@ -169,7 +169,11 @@ export const acceptProductionInward = async (req, res) => {
     // 1️⃣ Find warehouse stock (exclude production locations)
     // 1️⃣ Find warehouse stock
     const warehouseStock = await Inventory.findOne({
-      partName: inward.partName,
+      partName: {
+  $regex: `^${inward.partName}$`,
+  $options: "i"
+},
+
       type: "SPARE",
       locationType: "WAREHOUSE",
       quantity: { $gte: inward.quantity }
@@ -187,12 +191,16 @@ export const acceptProductionInward = async (req, res) => {
     await warehouseStock.save({ session });
 
     // 3️⃣ Add to production
-    await Inventory.findOneAndUpdate(
-      {
-        partName: inward.partName,
-        type: "SPARE",
-        location: inward.location,
-      },
+   await Inventory.findOneAndUpdate(
+  {
+    partName: {
+      $regex: `^${inward.partName}$`,
+      $options: "i"
+    },
+    type: "SPARE",
+    location: inward.location,
+  },
+
       {
         $inc: { quantity: inward.quantity },
         $setOnInsert: {

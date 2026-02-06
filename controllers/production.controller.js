@@ -84,17 +84,28 @@ export const acceptProductionInward = async (req, res) => {
     await warehouseStock.save({ session });
 
     // 3️⃣ Add to production location
-    await Inventory.findOneAndUpdate(
-      {
-        partName: inward.partName,
-        location: inward.location, // PROD_Mintoo
-        type: "SPARE",
-      },
-      {
-        $inc: { quantity: inward.quantity },
-      },
-      { upsert: true, session }
-    );
+   await Inventory.findOneAndUpdate(
+  {
+    partName: inward.partName,
+    location: inward.location,
+    type: "SPARE",
+  },
+  {
+    $inc: { quantity: inward.quantity },
+    $setOnInsert: {
+      locationType: "PRODUCTION",   // 🔥 THIS WAS MISSING
+      type: "SPARE",
+      partName: inward.partName,
+      location: inward.location,
+    },
+  },
+  {
+    upsert: true,
+    session,
+    runValidators: true,   // extra safety
+  }
+);
+
 
     // 4️⃣ Update request status
     inward.status = "ACCEPTED";

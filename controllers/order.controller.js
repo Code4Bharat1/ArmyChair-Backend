@@ -603,6 +603,104 @@ export const assignProductionWorker = async (req, res) => {
 
 import Inventory from "../models/inventory.model.js"; // make sure this exists
 
+// export const acceptProductionOrder = async (req, res) => {
+//   try {
+//     const { parts } = req.body;
+
+//     const order = await Order.findById(req.params.id);
+//     if (!order) {
+//       return res.status(404).json({ message: "Order not found" });
+//     }
+
+//     if (!order.productionWorker) {
+//       return res.status(400).json({
+//         message: "Assign worker before accepting",
+//       });
+//     }
+
+//     if (
+//       order.progress !== "PRODUCTION_PENDING" &&
+//       order.progress !== "PRODUCTION_IN_PROGRESS"
+//     ) {
+//       return res.status(400).json({
+//         message: "Order not in production stage",
+//       });
+//     }
+
+//     if (!parts || Object.keys(parts).length === 0) {
+//       return res.status(400).json({
+//         message: "No parts selected",
+//       });
+//     }
+
+//     const inventory = await Inventory.find({
+//   type: "SPARE",
+//   location: { $regex: "^PROD_" },
+// });
+// if (!inventory.length) {
+//   return res.status(400).json({
+//     message: "No production inventory available",
+//   });
+// }
+
+
+//     // 🔥 VALIDATE + DEDUCT
+//     for (const partName in parts) {
+//       const qtyToUse = Number(parts[partName] || 0);
+//       if (qtyToUse <= 0) continue;
+
+//       const items = inventory.filter(i => {
+//   if (!i.partName || typeof i.partName !== "string") return false;
+
+//   return (
+//     i.type === "SPARE" &&
+//     i.partName.trim().toLowerCase() ===
+//       String(partName).trim().toLowerCase()
+//   );
+// });
+
+
+//       const totalAvailable = items.reduce(
+//         (sum, i) => sum + i.quantity,
+//         0
+//       );
+
+//       if (qtyToUse > totalAvailable) {
+//         return res.status(400).json({
+//           message: `Not enough ${partName}`,
+//         });
+//       }
+
+//       // 🔥 Deduct from inventory documents
+//       let remaining = qtyToUse;
+
+//       for (const item of items) {
+//         if (remaining <= 0) break;
+
+//         const deduct = Math.min(item.quantity, remaining);
+//         item.quantity -= deduct;
+//         remaining -= deduct;
+
+//         await item.save();
+//       }
+//     }
+
+//     order.progress = "PRODUCTION_IN_PROGRESS";
+//     await order.save();
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Production materials issued successfully",
+//     });
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: err.message });
+
+//   }
+// };
+
+
 export const acceptProductionOrder = async (req, res) => {
   try {
     const { parts } = req.body;
@@ -633,28 +731,33 @@ export const acceptProductionOrder = async (req, res) => {
       });
     }
 
+    // 🔥 Fetch only production inventory
     const inventory = await Inventory.find({
-  type: "SPARE",
-  location: { $regex: "^PROD_" },
-});
-if (!inventory.length) {
-  return res.status(400).json({
-    message: "No production inventory available",
-  });
-}
+      type: "SPARE",
+      location: { $regex: "^PROD_" },
+    });
 
+    if (!inventory.length) {
+      return res.status(400).json({
+        message: "No production inventory available",
+      });
+    }
 
     // 🔥 VALIDATE + DEDUCT
     for (const partName in parts) {
       const qtyToUse = Number(parts[partName] || 0);
       if (qtyToUse <= 0) continue;
 
-      const items = inventory.filter(
-        i =>
+      // Case-insensitive matching
+      const items = inventory.filter(i => {
+        if (!i.partName || typeof i.partName !== "string") return false;
+
+        return (
           i.type === "SPARE" &&
-          i.partName &&
-          i.partName.trim().toLowerCase() === partName.trim().toLowerCase()
-      );
+          i.partName.trim().toLowerCase() ===
+            String(partName).trim().toLowerCase()
+        );
+      });
 
       const totalAvailable = items.reduce(
         (sum, i) => sum + i.quantity,
@@ -667,17 +770,19 @@ if (!inventory.length) {
         });
       }
 
-      // 🔥 Deduct from inventory documents
       let remaining = qtyToUse;
 
       for (const item of items) {
         if (remaining <= 0) break;
 
         const deduct = Math.min(item.quantity, remaining);
-        item.quantity -= deduct;
         remaining -= deduct;
 
-        await item.save();
+        // ✅ Atomic update (NO .save())
+        await Inventory.updateOne(
+          { _id: item._id, quantity: { $gte: deduct } },
+          { $inc: { quantity: -deduct } }
+        );
       }
     }
 
@@ -690,8 +795,8 @@ if (!inventory.length) {
     });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Production accept failed" });
+    console.error("ACCEPT PRODUCTION ERROR:", err);
+    res.status(500).json({ message: err.message });
   }
 };
 
