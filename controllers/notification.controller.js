@@ -83,7 +83,7 @@ export const getNotifications = async (req, res) => {
         _id: `order-delay-${order._id}`,
         title: "Order Delayed",
         message: `Order ${order.orderId} is delayed`,
-        redirectUrl: "/superadmin/orders",
+        redirectUrl: "/superadmin/order",
         entityId: order._id,
       });
     });
@@ -98,7 +98,7 @@ export const getNotifications = async (req, res) => {
         _id: `order-amend-${order._id}`,
         title: "Order Amended Before Dispatch",
         message: `Order ${order.orderId} was amended before dispatch`,
-        redirectUrl: "/superadmin/orders",
+        redirectUrl: "/superadmin/order",
         entityId: order._id,
       });
     });
