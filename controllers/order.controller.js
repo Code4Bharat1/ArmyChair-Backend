@@ -705,6 +705,12 @@ export const acceptProductionOrder = async (req, res) => {
   try {
     const { parts } = req.body;
 
+    if (!parts || typeof parts !== "object" || Object.keys(parts).length === 0) {
+      return res.status(400).json({
+        message: "No parts selected",
+      });
+    }
+
     const order = await Order.findById(req.params.id);
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
@@ -725,13 +731,44 @@ export const acceptProductionOrder = async (req, res) => {
       });
     }
 
-    if (!parts || Object.keys(parts).length === 0) {
+    // ===============================
+    // 🔥 FIXED PRODUCTION VALIDATION
+    // ===============================
+
+    const existingParts = order.productionParts || {};
+
+    // Merge existing + new parts first (WITHOUT saving yet)
+    const mergedParts = { ...existingParts };
+
+    for (const partName in parts) {
+      const qtyToAdd = Number(parts[partName] || 0);
+      if (qtyToAdd <= 0) continue;
+
+      mergedParts[partName] =
+        (mergedParts[partName] || 0) + qtyToAdd;
+    }
+
+    const quantities = Object.values(mergedParts);
+
+    if (!quantities.length) {
       return res.status(400).json({
-        message: "No parts selected",
+        message: "No valid parts provided",
       });
     }
 
-    // 🔥 Fetch only production inventory
+    // 🔥 Chairs buildable = minimum part quantity
+    const buildableQty = Math.min(...quantities);
+
+    if (buildableQty > order.quantity) {
+      return res.status(400).json({
+        message: `Production exceeds order quantity. Order requires ${order.quantity}`,
+      });
+    }
+
+    // ===============================
+    // 🔥 INVENTORY VALIDATION
+    // ===============================
+
     const inventory = await Inventory.find({
       type: "SPARE",
       location: { $regex: "^PROD_" },
@@ -743,13 +780,11 @@ export const acceptProductionOrder = async (req, res) => {
       });
     }
 
-    // 🔥 VALIDATE + DEDUCT
     for (const partName in parts) {
       const qtyToUse = Number(parts[partName] || 0);
       if (qtyToUse <= 0) continue;
 
-      // Case-insensitive matching
-      const items = inventory.filter(i => {
+      const items = inventory.filter((i) => {
         if (!i.partName || typeof i.partName !== "string") return false;
 
         return (
@@ -766,7 +801,7 @@ export const acceptProductionOrder = async (req, res) => {
 
       if (qtyToUse > totalAvailable) {
         return res.status(400).json({
-          message: `Not enough ${partName}`,
+          message: `Not enough ${partName} in production inventory`,
         });
       }
 
@@ -778,7 +813,6 @@ export const acceptProductionOrder = async (req, res) => {
         const deduct = Math.min(item.quantity, remaining);
         remaining -= deduct;
 
-        // ✅ Atomic update (NO .save())
         await Inventory.updateOne(
           { _id: item._id, quantity: { $gte: deduct } },
           { $inc: { quantity: -deduct } }
@@ -786,12 +820,20 @@ export const acceptProductionOrder = async (req, res) => {
       }
     }
 
+    // ===============================
+    // 🔥 SAVE MERGED PARTS
+    // ===============================
+
+    order.productionParts = mergedParts;
+
     order.progress = "PRODUCTION_IN_PROGRESS";
+
     await order.save();
 
     res.status(200).json({
       success: true,
       message: "Production materials issued successfully",
+      order,
     });
 
   } catch (err) {
@@ -799,6 +841,8 @@ export const acceptProductionOrder = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+
 
 export const preDispatchEdit = async (req, res) => {
   try {

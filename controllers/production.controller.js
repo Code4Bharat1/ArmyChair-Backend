@@ -50,86 +50,114 @@ export const addProductionInward = async (req, res) => {
   }
 };
 
+// export const acceptProductionInward = async (req, res) => {
+//   const session = await mongoose.startSession();
+//   session.startTransaction();
 
-export const acceptProductionInward = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+//   try {
+//     const inward = await ProductionInward.findById(req.params.id).session(session);
 
-  try {
-    const inward = await ProductionInward.findById(req.params.id).session(session);
+//     if (!inward || inward.status !== "PENDING") {
+//       throw new Error("Invalid or already processed request");
+//     }
 
-    if (!inward || inward.status !== "PENDING") {
-      throw new Error("Invalid or already processed request");
-    }
+//     if (String(inward.assignedTo) !== String(req.user.id)) {
+//       throw new Error("You are not assigned to this request");
+//     }
 
-    if (String(inward.assignedTo) !== String(req.user.id)) {
-      throw new Error("You are not assigned to this request");
-    }
+//     // 1️⃣ Find warehouse stock
+//     const warehouseStock = await Inventory.findOne({
+//       partName: {
+//         $regex: `^${inward.partName}$`,
+//         $options: "i"
+//       },
+//       type: "SPARE",
+//       locationType: { $nin: ["PRODUCTION", "FITTING"] },
+//       quantity: { $gte: inward.quantity }
+//     })
+//       .sort({ quantity: -1 })
+//       .session(session);
 
-    // 1️⃣ Check warehouse stock
-    const warehouseStock = await Inventory.findOne({
-  partName: inward.partName,
-  type: "SPARE",
-  location: { $not: /^PROD_/ }, // any non-production location
-  quantity: { $gte: inward.quantity },
-}).session(session);
+//     if (!warehouseStock) throw new Error("Warehouse stock not found");
 
+//     // 2️⃣ Deduct from warehouse
+//     warehouseStock.quantity -= inward.quantity;
+//     await warehouseStock.save({ session });
 
-    if (!warehouseStock || warehouseStock.quantity < inward.quantity) {
-      throw new Error("Not enough stock in warehouse");
-    }
+//     // 3️⃣ Add to production (FIXED HERE)
+//     await Inventory.findOneAndUpdate(
+//       {
+//         partName: {
+//           $regex: `^${inward.partName}$`,
+//           $options: "i"
+//         },
+//         type: "SPARE",
+//         location: inward.location,
+//       },
+//       {
+//         $inc: { quantity: inward.quantity },
+//         $setOnInsert: {
+//           partName: inward.partName,
+//           type: "SPARE",
+//           location: inward.location,
+//           locationType: "PRODUCTION", // ✅ REQUIRED FIX
+//           maxQuantity: 0,
+//         },
+//       },
+//       {
+//         upsert: true,
+//         session,
+//         runValidators: true,
+//       }
+//     );
 
-    // 2️⃣ Deduct from warehouse
-    warehouseStock.quantity -= inward.quantity;
-    await warehouseStock.save({ session });
+//     // 4️⃣ Save movement
+//     await StockMovement.create(
+//       [{
+//         partName: inward.partName,
+//         fromLocation: warehouseStock.location,
+//         toLocation: inward.location,
+//         quantity: inward.quantity,
+//         movedBy: req.user.id,
+//         reason: "TRANSFER",
+//       }],
+//       { session }
+//     );
 
-    // 3️⃣ Add to production location
-   await Inventory.findOneAndUpdate(
-  {
-    partName: inward.partName,
-    location: inward.location,
-    type: "SPARE",
-  },
-  {
-    $inc: { quantity: inward.quantity },
-    $setOnInsert: {
-      locationType: "PRODUCTION",   // 🔥 THIS WAS MISSING
-      type: "SPARE",
-      partName: inward.partName,
-      location: inward.location,
-    },
-  },
-  {
-    upsert: true,
-    session,
-    runValidators: true,   // extra safety
-  }
-);
+//     // 5️⃣ Update inward
+//     inward.status = "ACCEPTED";
+//     inward.approvedBy = req.user.id;
+//     await inward.save({ session });
 
+//     await session.commitTransaction();
+//     session.endSession();
 
-    // 4️⃣ Update request status
-    inward.status = "ACCEPTED";
-    inward.approvedBy = req.user.id;
-    await inward.save({ session });
+//     await logActivity(req, {
+//       action: "PRODUCTION_REQUEST_APPROVED",
+//       module: "Warehouse",
+//       entityType: "ProductionInward",
+//       entityId: inward._id,
+//       description: `Transferred ${inward.quantity} ${inward.partName} to ${inward.location}`,
+//       sourceLocation: warehouseStock.location,
+//       destination: inward.location,
+//     });
 
-    await session.commitTransaction();
-    session.endSession();
+//     res.json({
+//       success: true,
+//       message: "Stock transferred to production",
+//     });
 
-    res.json({
-      success: true,
-      message: "Material transferred to production successfully",
-    });
+//   } catch (err) {
+//     await session.abortTransaction();
+//     session.endSession();
 
-  } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
+//     res.status(400).json({
+//       success: false,
+//       message: err.message,
+//     });
+//   }
+// };
 
-    res.status(400).json({
-      success: false,
-      message: err.message,
-    });
-  }
-};
 
 
 /* ================= GET OWN PRODUCTION INWARDS ================= */

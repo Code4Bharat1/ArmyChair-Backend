@@ -166,32 +166,27 @@ export const acceptProductionInward = async (req, res) => {
       throw new Error("You are not assigned to this request");
     }
 
-    // 1️⃣ Find warehouse stock (exclude production locations)
     // 1️⃣ Find warehouse stock
     const warehouseStock = await Inventory.findOne({
       partName: {
-  $regex: `^${inward.partName}$`,
-  $options: "i"
-},
-
+        $regex: `^${inward.partName}$`,
+        $options: "i"
+      },
       type: "SPARE",
-      locationType: "WAREHOUSE",
+      locationType: { $nin: ["PRODUCTION", "FITTING"] },
       quantity: { $gte: inward.quantity }
     })
-      .sort({ quantity: -1 })  // take highest stock
+      .sort({ quantity: -1 })
       .session(session);
 
-
     if (!warehouseStock) throw new Error("Warehouse stock not found");
-    if (warehouseStock.quantity < inward.quantity)
-      throw new Error("Not enough warehouse stock");
 
-    // 2️⃣ Deduct
+    // 2️⃣ Deduct from warehouse
     warehouseStock.quantity -= inward.quantity;
     await warehouseStock.save({ session });
 
-    // 3️⃣ Add to production
-   await Inventory.findOneAndUpdate(
+    // 3️⃣ Add to production (FIXED HERE)
+    await Inventory.findOneAndUpdate(
   {
     partName: {
       $regex: `^${inward.partName}$`,
@@ -200,19 +195,32 @@ export const acceptProductionInward = async (req, res) => {
     type: "SPARE",
     location: inward.location,
   },
+  {
+    $inc: { quantity: inward.quantity },
+    $setOnInsert: {
+      partName: inward.partName,
+      type: "SPARE",
+      location: inward.location,
 
-      {
-        $inc: { quantity: inward.quantity },
-        $setOnInsert: {
-          partName: inward.partName,
-          type: "SPARE",
-          location: inward.location,
-        },
-      },
-      { upsert: true, session }
-    );
+      locationType:
+        inward.location.startsWith("PROD_")
+          ? "PRODUCTION"
+          : inward.location.startsWith("FIT_")
+          ? "FITTING"
+          : "WAREHOUSE",
 
-    // 4️⃣ Save movement (INSIDE TRANSACTION)
+      maxQuantity: 0,
+    },
+  },
+  {
+    upsert: true,
+    session,
+    runValidators: true,
+  }
+);
+
+
+    // 4️⃣ Save movement
     await StockMovement.create(
       [{
         partName: inward.partName,
@@ -229,7 +237,6 @@ export const acceptProductionInward = async (req, res) => {
     inward.status = "ACCEPTED";
     inward.approvedBy = req.user.id;
     await inward.save({ session });
-
 
     await session.commitTransaction();
     session.endSession();
@@ -259,6 +266,7 @@ export const acceptProductionInward = async (req, res) => {
     });
   }
 };
+
 
 
 

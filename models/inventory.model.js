@@ -32,11 +32,16 @@ const inventorySchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-locationType: {
+    locationType: {
+      type: String,
+      enum: ["WAREHOUSE", "PRODUCTION", "FITTING"],
+      required: true,
+    },
+    colour: {
   type: String,
-  enum: ["WAREHOUSE", "PRODUCTION", "FITTING"],
-  required: true,
+  trim: true,
 },
+
 
     vendor: {
       type: mongoose.Schema.Types.ObjectId,

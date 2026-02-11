@@ -23,7 +23,7 @@ export const createInventory = async (req, res) => {
   try {
     const {
       chairType,
-      color,
+      colour,
       vendor,
       quantity,
       minQuantity,
@@ -31,8 +31,10 @@ export const createInventory = async (req, res) => {
       location,
     } = req.body || {};
 
+
     if (
       !chairType ||
+      !colour ||        // ✅ ADD THIS
       !vendor ||
       quantity === undefined ||
       minQuantity === undefined ||
@@ -41,13 +43,14 @@ export const createInventory = async (req, res) => {
       return res.status(400).json({ message: "All fields are required" });
     }
 
+
     if (!mongoose.Types.ObjectId.isValid(vendor)) {
       return res.status(400).json({ message: "Invalid vendor ID" });
     }
 
     const inventoryData = {
       chairType,
-      color,
+      colour,
       vendor, // ✅ directly use ObjectId
       quantity: Number(quantity),
       minQuantity: Number(minQuantity),
@@ -62,32 +65,35 @@ export const createInventory = async (req, res) => {
     }
 
     const inventory = await Inventory.findOneAndUpdate(
-  {
-    chairType,
-    location,
-    type: "FULL",
-  },
-  {
-    $inc: { quantity: Number(quantity) }, // ✅ ADD quantity
-    $setOnInsert: {
-      chairType,
-      vendor,
-      location,
-      type: "FULL",
-      minQuantity: Number(minQuantity),
-      maxQuantity:
-        req.user?.role === "admin" && maxQuantity !== undefined
-          ? Number(maxQuantity)
-          : 0,
-      createdBy: req.user?.id,
-      createdByRole: req.user?.role,
-    },
-  },
-  {
-    new: true,
-    upsert: true, // 🔥 THIS is the key
-  }
-);
+      {
+        chairType,
+        colour,     // ✅ ADD THIS
+        location,
+        type: "FULL",
+      },
+      {
+        $inc: { quantity: Number(quantity) },
+        $setOnInsert: {
+          chairType,
+          colour,   // ✅ ADD THIS
+          vendor,
+          location,
+          type: "FULL",
+          minQuantity: Number(minQuantity),
+          maxQuantity:
+            req.user?.role === "admin" && maxQuantity !== undefined
+              ? Number(maxQuantity)
+              : 0,
+          createdBy: req.user?.id,
+          createdByRole: req.user?.role,
+        },
+      },
+      {
+        new: true,
+        upsert: true,
+      }
+    );
+
 
 
     res.status(201).json({
@@ -162,11 +168,11 @@ export const updateInventory = async (req, res) => {
       updateData.chairType = req.body.chairType;
     }
     if (req.body.vendor !== undefined) {
-  if (!mongoose.Types.ObjectId.isValid(req.body.vendor)) {
-    return res.status(400).json({ message: "Invalid vendor ID" });
-  }
-  updateData.vendor = req.body.vendor;
-}
+      if (!mongoose.Types.ObjectId.isValid(req.body.vendor)) {
+        return res.status(400).json({ message: "Invalid vendor ID" });
+      }
+      updateData.vendor = req.body.vendor;
+    }
 
 
     if (req.body.quantity !== undefined) {
@@ -177,9 +183,10 @@ export const updateInventory = async (req, res) => {
       updateData.minQuantity = Number(req.body.minQuantity);
     }
 
-    if (req.body.color !== undefined) {
-      updateData.color = req.body.color;
+    if (req.body.colour !== undefined) {
+      updateData.colour = req.body.colour;
     }
+
 
     const updatedInventory = await Inventory.findByIdAndUpdate(
       req.params.id,
@@ -309,21 +316,10 @@ export const createSpareParts = async (req, res) => {
 //get all spare parts
 export const getSpareParts = async (req, res) => {
   try {
-    let filter = { type: "SPARE" };
-
-    if (req.user.role === "warehouse") {
-      filter.locationType = "WAREHOUSE";
-    }
-
-    if (req.user.role === "fitting") {
-      filter.locationType = "FITTING";
-    }
-
-    if (req.user.role === "production") {
-      filter.locationType = "PRODUCTION";
-    }
-
-    const parts = await Inventory.find(filter)
+    const parts = await Inventory.find({
+      type: "SPARE",
+      locationType: { $nin: ["PRODUCTION", "FITTING"] },
+    })
       .populate("createdBy", "name role")
       .sort({ createdAt: -1 });
 
@@ -345,6 +341,8 @@ export const getSpareParts = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+
 
 
 

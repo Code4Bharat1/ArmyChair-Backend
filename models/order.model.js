@@ -40,33 +40,33 @@ const orderSchema = new mongoose.Schema(
       required: true,
       min: 1,
     },
-    
+
     lastAmendedAt: Date,
-amendedBy: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "User",
-},
+    amendedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
 
 
     isPartial: {
       type: Boolean,
       default: false,
     },
-progress: {
-  type: String,
-  enum: [
-    "ORDER_PLACED",
-    "PRODUCTION_PENDING",
-    "PRODUCTION_IN_PROGRESS",   // 👈 ADD THIS
-    "PRODUCTION_COMPLETED",
-    "WAREHOUSE_COLLECTED",
-    "FITTING_IN_PROGRESS",
-    "FITTING_COMPLETED",
-    "READY_FOR_DISPATCH",
-    "DISPATCHED",
-    "PARTIAL",
-  ],
-},
+    progress: {
+      type: String,
+      enum: [
+        "ORDER_PLACED",
+        "PRODUCTION_PENDING",
+        "PRODUCTION_IN_PROGRESS",   // 👈 ADD THIS
+        "PRODUCTION_COMPLETED",
+        "WAREHOUSE_COLLECTED",
+        "FITTING_IN_PROGRESS",
+        "FITTING_COMPLETED",
+        "READY_FOR_DISPATCH",
+        "DISPATCHED",
+        "PARTIAL",
+      ],
+    },
 
 
     createdBy: {
@@ -81,17 +81,20 @@ progress: {
       required: true,
     },
     productionWorker: {
-  type: String, // just store worker name
-},
+      type: String, // just store worker name
+    },
 
-productionAssignedAt: {
-  type: Date,
-},
+    productionAssignedAt: {
+      type: Date,
+    },
 
-productionCompletedAt: {
-  type: Date,
+    productionCompletedAt: {
+      type: Date,
+    },
+    productionParts: {
+  type: Object,
+  default: {},
 },
-
     partialAccepted: {
       type: Boolean,
       default: false,
@@ -108,7 +111,7 @@ productionCompletedAt: {
         qty: Number,
       },
     ],
-    
+
 
   },
   { timestamps: true }

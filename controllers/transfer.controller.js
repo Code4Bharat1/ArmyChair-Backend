@@ -58,6 +58,13 @@ await Inventory.findOneAndUpdate(
   {
     $inc: { quantity: qty },
     $setOnInsert: {
+      locationType:
+        toLocation.startsWith("PROD_")
+          ? "PRODUCTION"
+          : toLocation.startsWith("FIT_")
+          ? "FITTING"
+          : "WAREHOUSE",
+
       minQuantity: source.type === "FULL" ? source.minQuantity : undefined,
       maxQuantity: source.maxQuantity,
       createdBy: req.user?.id,
@@ -67,6 +74,7 @@ await Inventory.findOneAndUpdate(
   {
     upsert: true,
     new: true,
+    runValidators: true,
   }
 );
 
