@@ -1,6 +1,9 @@
 import User from "../models/User.model.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { verifyCaptcha } from "../utils/captcha.js";
+
+const loginAttempts = new Map();
 
 /**
  * =========================
@@ -89,28 +92,64 @@ export const signup = async (req, res) => {
  */
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, captchaId, captchaValue } = req.body;
+    const ip = req.ip;
+
+    // 🔢 Count attempts FIRST
+    const attempts = (loginAttempts.get(ip) || 0) + 1;
+    loginAttempts.set(ip, attempts);
+
+    setTimeout(() => loginAttempts.delete(ip), 15 * 60 * 1000);
+
+    console.log("Login attempts:", ip, attempts);
+
+    // 🤖 CAPTCHA CHECK (if required)
+    if (attempts >= 3) {
+      if (!captchaId || !captchaValue) {
+        return res.status(400).json({
+          message: "Captcha required",
+          requireCaptcha: true,
+        });
+      }
+
+      const ok = verifyCaptcha(captchaId, captchaValue);
+      if (!ok) {
+        return res.status(400).json({
+          message: "Invalid captcha",
+          requireCaptcha: true,
+        });
+      }
+    }
 
     // 🔎 Find user
     const user = await User.findOne({ email }).select("+password");
+
     if (!user) {
-      return res.status(400).json({ message: "Invalid credentials" });
+      return res.status(400).json({
+        message: "Email not found",
+        requireCaptcha: attempts >= 3,
+      });
     }
 
-    // 🔐 Compare password
+    // 🔐 Check password
     const isMatch = await bcrypt.compare(password, user.password);
+
     if (!isMatch) {
-      return res.status(400).json({ message: "Invalid credentials" });
+      return res.status(400).json({
+        message: "Incorrect password",
+        requireCaptcha: attempts >= 3,
+      });
     }
 
-    // 🔑 Create token
+    // ✅ SUCCESS → reset attempts
+    loginAttempts.delete(ip);
+
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
-    // 🚫 Remove sensitive fields
     const userResponse = {
       id: user._id,
       name: user.name,
@@ -122,15 +161,17 @@ export const login = async (req, res) => {
       createdAt: user.createdAt,
     };
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Login successful",
       token,
       user: userResponse,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
+
+
 /**
  * =========================
  * GET ALL STAFF (ADMIN)

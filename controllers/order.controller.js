@@ -4,7 +4,50 @@ import mongoose from "mongoose";
 import Order from "../models/order.model.js";
 import { createVendor } from "./vendor.controller.js";
 import { logActivity } from "../utils/logActivity.js";
+import XLSX from "xlsx";
 
+
+const COLUMN_MAP = {
+  dispatchedTo: [
+    "dispatchedto",
+    "vendor",
+    "vendor name",
+    "party",
+    "customer",
+    "supplier",
+  ],
+  chairModel: [
+    "chairmodel",
+    "product",
+    "item",
+    "item name",
+    "model",
+    "part",
+  ],
+  orderType: [
+    "ordertype",
+    "order type",
+    "type",
+  ],
+  orderDate: [
+    "orderdate",
+    "order date",
+    "date",
+  ],
+  deliveryDate: [
+    "deliverydate",
+    "delivery date",
+    "due date",
+    "expected date",
+  ],
+  quantity: [
+    "quantity",
+    "qty",
+    "nos",
+    "count",
+    "units",
+  ],
+};
 
 const createOrderInternal = async ({ row, user }) => {
   const {
@@ -499,6 +542,56 @@ export const productAnalytics = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+const normalizeHeader = (str = "") =>
+  str.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const normalizeRow = (row) => {
+  const normalized = {};
+
+  // Convert Excel headers to normalized form
+  const normalizedKeys = Object.keys(row).map((key) => ({
+    original: key,
+    clean: normalizeHeader(key),
+    value: row[key],
+  }));
+
+  for (const targetField in COLUMN_MAP) {
+    for (const alias of COLUMN_MAP[targetField]) {
+      const cleanAlias = normalizeHeader(alias);
+
+      const match = normalizedKeys.find((k) =>
+        k.clean.includes(cleanAlias)
+      );
+
+      if (match) {
+        normalized[targetField] = match.value;
+        break;
+      }
+    }
+  }
+
+  return normalized;
+};
+
+const normalizeDate = (value) => {
+  if (!value) return null;
+
+  // Excel serial number (corrected)
+  if (typeof value === "number") {
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    return new Date(excelEpoch.getTime() + value * 86400000);
+  }
+
+  // Already Date object
+  if (value instanceof Date) {
+    return value;
+  }
+
+  // String date
+  const parsed = new Date(value);
+  return isNaN(parsed.getTime()) ? null : parsed;
+};
+
 
 export const uploadOrders = async (req, res) => {
   try {
@@ -511,33 +604,76 @@ export const uploadOrders = async (req, res) => {
     const errors = [];
 
     for (const file of req.files) {
-      const csvString = file.buffer.toString("utf-8");
-      const rows = await csv().fromString(csvString);
+      let rows = [];
 
-      for (const row of rows) {
-        total++;
-        try {
-          const order = await createOrderInternal({
-            row,
-            user: req.user,
-          });
+      const ext = file.originalname.split(".").pop().toLowerCase();
 
-          await logActivity(req, {
-            action: "CREATE_ORDER_BULK",
-            module: "Order",
-            entityType: "Order",
-            entityId: order._id,
-            description: `Bulk order created (${order.orderId})`,
-          });
-
-          created++;
-        } catch (err) {
-          errors.push({
-            row: total,
-            message: err.message,
-          });
-        }
+      // -------- CSV --------
+      if (ext === "csv") {
+        const csvString = file.buffer.toString("utf-8");
+        rows = await csv().fromString(csvString);
       }
+
+      // -------- EXCEL --------
+      else if (ext === "xlsx" || ext === "xls") {
+        const workbook = XLSX.read(file.buffer, { type: "buffer" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(sheet);
+      }
+
+      // -------- Unsupported --------
+      else {
+        continue;
+      }
+
+      for (const rawRow of rows) {
+  if (!Object.keys(rawRow).length) continue;
+
+  total++;
+
+  try {
+    const row = normalizeRow(rawRow);
+
+    // ✅ REQUIRED FIXES
+    row.quantity = Number(
+      String(row.quantity).replace(/[^0-9.]/g, "")
+    );
+
+    row.orderType =
+      String(row.orderType || "")
+        .trim()
+        .toUpperCase() === "SPARE"
+        ? "SPARE"
+        : "FULL";
+
+    row.orderDate = normalizeDate(row.orderDate);
+    row.deliveryDate = normalizeDate(row.deliveryDate);
+
+    if (row.dispatchedTo) row.dispatchedTo = String(row.dispatchedTo).trim();
+    if (row.chairModel) row.chairModel = String(row.chairModel).trim();
+
+    const order = await createOrderInternal({
+      row,
+      user: req.user,
+    });
+
+    await logActivity(req, {
+      action: "CREATE_ORDER_BULK",
+      module: "Order",
+      entityType: "Order",
+      entityId: order._id,
+      description: `Bulk order created (${order.orderId})`,
+    });
+
+    created++;
+  } catch (err) {
+    errors.push({
+      row: total,
+      message: err.message,
+    });
+  }
+}
+
     }
 
     res.status(200).json({
@@ -553,6 +689,8 @@ export const uploadOrders = async (req, res) => {
     });
   }
 };
+
+
 export const assignProductionWorker = async (req, res) => {
   try {
     const { workerName } = req.body;
