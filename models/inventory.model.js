@@ -86,7 +86,17 @@ inventorySchema.index(
     partialFilterExpression: { type: "SPARE" },
   }
 );
+inventorySchema.pre("validate", function () {
+  const loc = this.location?.trim().toUpperCase() || "";
 
+  if (loc.startsWith("PROD_")) {
+    this.locationType = "PRODUCTION";
+  } else if (loc.startsWith("FIT_")) {
+    this.locationType = "FITTING";
+  } else {
+    this.locationType = "WAREHOUSE";
+  }
+});
 
 
 export default mongoose.model("Inventory", inventorySchema);

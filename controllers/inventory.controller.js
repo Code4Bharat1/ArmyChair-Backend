@@ -261,7 +261,7 @@ export const deleteInventory = async (req, res) => {
 
 export const createSpareParts = async (req, res) => {
   try {
-    const { partName, quantity, location } = req.body;
+    const { partName, quantity, location, maxQuantity } = req.body;
 
     if (!partName || quantity == null || !location) {
       return res.status(400).json({
@@ -271,37 +271,47 @@ export const createSpareParts = async (req, res) => {
 
     const qty = Number(quantity);
 
+    // ✅ NORMALIZE PART NAME (CASE-SAFE)
+    const normalizedPartName = partName.trim();
+
+    // ✅ DERIVE LOCATION TYPE (CRITICAL)
+    let locationType = "WAREHOUSE";
+    if (location.startsWith("PROD_")) locationType = "PRODUCTION";
+    if (location.startsWith("FIT_")) locationType = "FITTING";
+
     const sparePart = await Inventory.findOneAndUpdate(
       {
-        partName,
-        location,
+        partName: normalizedPartName,
+        location: location.trim(),
         type: "SPARE",
       },
       {
         $inc: { quantity: qty },
         $setOnInsert: {
-          partName,
-          location,
+          partName: normalizedPartName,
+          location: location.trim(),
+          locationType,          // ✅ FIX
           type: "SPARE",
           maxQuantity:
-            req.user?.role === "admin" && req.body.maxQuantity !== undefined
-              ? Number(req.body.maxQuantity)
-              : undefined,
-
+            req.user?.role === "admin" && maxQuantity !== undefined
+              ? Number(maxQuantity)
+              : 0,
           createdBy: req.user?.id,
           createdByRole: req.user?.role,
         },
-
       },
-      { new: true, upsert: true },
+      { new: true, upsert: true }
     );
+
     await logActivity(req, {
       action: "INVENTORY_CREATE",
       module: "Inventory",
       entityType: "Inventory",
       entityId: sparePart._id,
       description: `Created spare part ${sparePart.partName} at ${sparePart.location}`,
+      destination: sparePart.location,
     });
+
     res.status(201).json({
       success: true,
       message: "Spare part added successfully",
@@ -312,7 +322,6 @@ export const createSpareParts = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 //get all spare parts
 export const getSpareParts = async (req, res) => {
   try {

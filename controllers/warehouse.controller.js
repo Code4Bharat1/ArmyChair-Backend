@@ -30,31 +30,46 @@ export const getPendingProductionInward = async (req, res) => {
 export const getOrderPickData = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
-    if (!order)
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not found" });
-
-    const spareStock = await Inventory.find({ type: "SPARE" });
-
-    // group by part name
-    const grouped = {};
-
-    for (const item of spareStock) {
-      if (!grouped[item.partName]) grouped[item.partName] = [];
-
-      grouped[item.partName].push({
-        inventoryId: item._id,
-        location: item.location,
-        available: item.quantity,
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
       });
     }
 
+    // ✅ FETCH ONLY WAREHOUSE STOCK (case-insensitive safe)
+    const spareStock = await Inventory.find({
+      type: "SPARE",
+      locationType: "WAREHOUSE",
+      quantity: { $gt: 0 },
+    });
 
-    const parts = Object.keys(grouped).map((partName) => ({
-      partName,
-      locations: grouped[partName],
-    }));
+    /**
+     * Group by NORMALIZED part name
+     * key = lowercase trimmed name
+     * value keeps original casing for UI
+     */
+    const grouped = {};
+
+    for (const item of spareStock) {
+      const key = item.partName.trim().toLowerCase(); // 🔥 FIX
+
+      if (!grouped[key]) {
+        grouped[key] = {
+          partName: item.partName, // preserve casing for UI
+          locations: [],
+        };
+      }
+
+      grouped[key].locations.push({
+        inventoryId: item._id,
+        location: item.location,
+        available: item.quantity,
+        locationType: item.locationType,
+      });
+    }
+
+    const parts = Object.values(grouped);
 
     res.json({
       success: true,
@@ -63,7 +78,10 @@ export const getOrderPickData = async (req, res) => {
     });
   } catch (err) {
     console.error("Pick Data Error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
 

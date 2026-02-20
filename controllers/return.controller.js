@@ -213,78 +213,75 @@ export const fittingDecision = async (req, res) => {
       });
     }
 
-    /* ================= ACCEPT FLOW ================= */
-    if (decision !== "Accepted") {
-      return res.status(400).json({
-        message: "Invalid decision",
-      });
-    }
+// ================= ACCEPT FLOW =================
+if (decision === "Accepted") {
 
-    if (!inventoryType) {
-      return res.status(400).json({
-        message: "Select GOOD or BAD",
-      });
-    }
+  if (!inventoryType) {
+    return res.status(400).json({
+      message: "Inventory type is required",
+    });
+  }
 
-    returnItem.fittingDecision = "Accepted";
-    returnItem.fittingRemarks = remarks || "";
+  returnItem.fittingDecision = "Accepted";
+  returnItem.fittingRemarks = remarks || "";
 
-    /* ================= BAD ================= */
-    if (inventoryType === "BAD") {
-      returnItem.status = "Bad-Inventory";
-      await returnItem.save();
+  // ---------- BAD ----------
+  if (inventoryType === "BAD") {
+    returnItem.status = "Bad-Inventory";
+    await returnItem.save();
 
-      // prevent duplicate bad entry
-      const exists = await BadReturn.findOne({ orderId: returnItem.orderId });
-      if (!exists) {
-        await BadReturn.create({
-          orderId: returnItem.orderId,
-          chairType: returnItem.chairType,
-          quantity: returnItem.quantity,
-          reason: remarks,
-          returnedFrom: returnItem.returnedFrom,
-          createdBy: req.user.id,
-        });
-      }
-
-      return res.json({
-        success: true,
-        message: "Marked as bad inventory",
-      });
-    }
-
-    /* ================= GOOD ================= */
-    if (inventoryType === "GOOD") {
-
-      if (!assignedTo) {
-        return res.status(400).json({
-          message: "Warehouse staff must be assigned",
-        });
-      }
-
-      const warehouseUser = await User.findById(assignedTo);
-      if (!warehouseUser || warehouseUser.role !== "warehouse") {
-        return res.status(400).json({
-          message: "Invalid warehouse user",
-        });
-      }
-
-      returnItem.status = "Accepted";
-      await returnItem.save();
-
-      await ProductionInward.create({
-        partName: returnItem.chairType,
+    const exists = await BadReturn.findOne({ orderId: returnItem.orderId });
+    if (!exists) {
+      await BadReturn.create({
+        orderId: returnItem.orderId,
+        chairType: returnItem.chairType,
         quantity: returnItem.quantity,
-        assignedTo,
+        reason: remarks,
+        returnedFrom: returnItem.returnedFrom,
         createdBy: req.user.id,
-        status: "PENDING",
-      });
-
-      return res.json({
-        success: true,
-        message: "Return sent to warehouse for approval",
       });
     }
+
+    return res.json({
+      success: true,
+      message: "Marked as bad inventory",
+    });
+  }
+
+  // ---------- GOOD ----------
+  if (inventoryType === "GOOD") {
+
+    if (!assignedTo) {
+      return res.status(400).json({
+        message: "Warehouse staff must be assigned",
+      });
+    }
+
+    const warehouseUser = await User.findById(assignedTo);
+    if (!warehouseUser || warehouseUser.role !== "warehouse") {
+      return res.status(400).json({
+        message: "Invalid warehouse user",
+      });
+    }
+
+    returnItem.status = "Accepted";
+    await returnItem.save();
+
+    await ProductionInward.create({
+      partName: returnItem.chairType,
+      quantity: returnItem.quantity,
+      location: returnItem.returnedFrom, // ✅ REQUIRED FIX
+      assignedTo,
+      createdBy: req.user.id,
+      status: "PENDING",
+    });
+
+    return res.json({
+      success: true,
+      message: "Return sent to warehouse for approval",
+    });
+  }
+}
 
   } catch (error) {
     console.error("Fitting decision error:", error);

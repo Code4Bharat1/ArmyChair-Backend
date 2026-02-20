@@ -180,7 +180,7 @@ export const login = async (req, res) => {
 export const getAllStaff = async (req, res) => {
   try {
     const staff = await User.find(
-      { role: { $in: ["sales", "warehouse", "fitting","production"] } },
+      { role: { $in: ["sales", "warehouse", "fitting","production","admin","user"] } },
       {
         password: 0,
         __v: 0,
