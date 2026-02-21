@@ -40,7 +40,23 @@ const orderSchema = new mongoose.Schema(
       required: true,
       min: 1,
     },
-
+items: {
+  type: [
+    {
+      name: {
+        type: String,
+        required: true,
+        trim: true,
+      },
+      quantity: {
+        type: Number,
+        required: true,
+        min: 1,
+      },
+    },
+  ],
+  default: undefined, // 👈 VERY IMPORTANT (explained below)
+},
     lastAmendedAt: Date,
     amendedBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -57,7 +73,7 @@ const orderSchema = new mongoose.Schema(
       enum: [
         "ORDER_PLACED",
         "PRODUCTION_PENDING",
-        "PRODUCTION_IN_PROGRESS",   // 👈 ADD THIS
+        "PRODUCTION_IN_PROGRESS",   
         "PRODUCTION_COMPLETED",
         "WAREHOUSE_COLLECTED",
         "FITTING_IN_PROGRESS",
@@ -88,6 +104,9 @@ const orderSchema = new mongoose.Schema(
       type: Date,
     },
 
+    remark:{
+      type: String,
+    },
     productionCompletedAt: {
       type: Date,
     },

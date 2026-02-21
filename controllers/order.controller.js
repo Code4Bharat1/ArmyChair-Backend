@@ -48,21 +48,46 @@ const COLUMN_MAP = {
     "units",
   ],
 };
+// 🔥 NORMALIZE ITEMS (BACKWARD COMPATIBLE)
+function normalizeOrderItems(order) {
+  // If new multi-item order already exists
+  if (order.items && order.items.length) return;
+
+  // Old single-item order → convert logically
+  if (order.chairModel && order.quantity) {
+    order.items = [
+      {
+        name: order.chairModel,
+        quantity: order.quantity,
+      },
+    ];
+  }
+}
 
 const createOrderInternal = async ({ row, user }) => {
   const {
-    dispatchedTo,
-    chairModel,
-    orderType = "FULL",
-    orderDate,
-    deliveryDate,
-    quantity,
-    salesPerson,
-  } = row;
+  dispatchedTo,
+  chairModel,
+  items,              // ✅ ADD
+  orderType = "FULL",
+  orderDate,
+  remark,
+  deliveryDate,
+  quantity,
+  salesPerson,
+} = row;
 
-  if (!dispatchedTo || !chairModel || !orderDate || !deliveryDate || !quantity) {
-    throw new Error("Missing required fields");
-  }
+  if (
+  !dispatchedTo ||
+  !orderDate ||
+  !deliveryDate ||
+  (
+    (!items || !items.length) &&
+    (!chairModel || !quantity)
+  )
+) {
+  throw new Error("Missing required fields");
+}
 
   let vendorId;
   if (mongoose.Types.ObjectId.isValid(dispatchedTo)) {
@@ -83,24 +108,38 @@ const createOrderInternal = async ({ row, user }) => {
   const assignedSalesPerson =
     user.role === "admin" ? salesPerson || creatorId : creatorId;
 
-  return await Order.create({
-    dispatchedTo: vendorId,
-    chairModel,
-    orderType,
-    orderDate,
-    deliveryDate,
-    quantity: Number(quantity),
-    isPartial: false,
-    createdBy: creatorId,
-    salesPerson: assignedSalesPerson,
-    progress: initialProgress, // 👈 changed
-  });
+ const order = await Order.create({
+  dispatchedTo: vendorId,
+  chairModel,
+  quantity: quantity ? Number(quantity) : undefined,
+  items, // ✅ NEW
+  orderType,
+  orderDate,
+  deliveryDate,
+  remark,
+  isPartial: false,
+  createdBy: creatorId,
+  salesPerson: assignedSalesPerson,
+  progress: initialProgress,
+});
+
+// 🔥 CRITICAL
+normalizeOrderItems(order);
+await order.save();
+
+return order;
 
 };
 
 /* ================= CREATE ORDER ================= */
 export const createOrder = async (req, res) => {
   try {
+
+     // ✅ ADD HERE
+    if (req.body.items && req.body.items.length) {
+      req.body.chairModel = req.body.items[0].name;
+      req.body.quantity = req.body.items[0].quantity;
+    }
     const order = await createOrderInternal({
       row: req.body,
       user: req.user,
@@ -208,7 +247,7 @@ const orders = await Order.find(query)
   .populate("dispatchedTo", "name")
   .sort({ createdAt: -1 });
 
-
+orders.forEach(normalizeOrderItems);
     res.json({ orders });
   } catch (err) {
     console.error("GET ORDERS ERROR:", err);
@@ -255,20 +294,21 @@ export const updateOrder = async (req, res) => {
       });
     }
 
-    if (order.progress !== "ORDER_PLACED") {
-      return res.status(403).json({
-        success: false,
-        message: "Order cannot be edited after warehouse processing",
-      });
-    }
+    // if (order.progress !== "ORDER_PLACED") {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Order cannot be edited after warehouse processing",
+    //   });
+    // }
 
     const allowedUpdates = [
-      "dispatchedTo",
-      "chairModel",
-      "orderDate",
-      "deliveryDate",
-      "quantity",
-    ];
+  "dispatchedTo",
+  "chairModel",
+  "orderDate",
+  "deliveryDate",
+  "quantity",
+  "remark", // ✅ ADD THIS
+];
 
     const updates = {};
 
@@ -984,7 +1024,7 @@ export const acceptProductionOrder = async (req, res) => {
 
 export const preDispatchEdit = async (req, res) => {
   try {
-    const { dispatchedTo, orderDate, deliveryDate } = req.body;
+    const { dispatchedTo, orderDate, deliveryDate, remark } = req.body;
 
     const order = await Order.findById(req.params.id)
       .populate("dispatchedTo", "name");
@@ -999,20 +1039,27 @@ export const preDispatchEdit = async (req, res) => {
       });
     }
 
+    // ✅ CAPTURE OLD VALUES FIRST
     const oldValues = {
       dispatchedTo: order.dispatchedTo?.name,
       orderDate: order.orderDate,
       deliveryDate: order.deliveryDate,
+      remark: order.remark,
     };
 
+    // ✅ APPLY UPDATES
+    if (remark !== undefined) {
+      order.remark = remark;
+    }
+
     if (dispatchedTo) {
-  if (mongoose.Types.ObjectId.isValid(dispatchedTo)) {
-    order.dispatchedTo = dispatchedTo;
-  } else {
-    const vendor = await createVendor(dispatchedTo);
-    order.dispatchedTo = vendor._id;
-  }
-}
+      if (mongoose.Types.ObjectId.isValid(dispatchedTo)) {
+        order.dispatchedTo = dispatchedTo;
+      } else {
+        const vendor = await createVendor(dispatchedTo);
+        order.dispatchedTo = vendor._id;
+      }
+    }
 
     if (orderDate) order.orderDate = orderDate;
     if (deliveryDate) order.deliveryDate = deliveryDate;
@@ -1022,7 +1069,7 @@ export const preDispatchEdit = async (req, res) => {
 
     await order.save();
 
-    // 🔔 Admin activity log (you already use this)
+    // ✅ FIXED LOG
     await logActivity(req, {
       action: "ORDER_AMENDED_PRE_DISPATCH",
       module: "Order",
@@ -1031,7 +1078,7 @@ export const preDispatchEdit = async (req, res) => {
       description: `Order ${order.orderId} amended before dispatch`,
       meta: {
         before: oldValues,
-        after: { dispatchedTo, orderDate, deliveryDate },
+        after: { dispatchedTo, orderDate, deliveryDate, remark },
       },
     });
 

@@ -517,17 +517,21 @@ export const checkInventoryForOrder = async (req, res) => {
 
 export const getChairModels = async (req, res) => {
   try {
-    const models = await Inventory.find({ type: "FULL" }).distinct("chairType");
-    res.json({ models });
+    const fromInventory = await Inventory.find({ type: "FULL" }).distinct("chairType");
+    const fromOrders = await Order.find({ orderType: "FULL" }).distinct("chairModel");
+    const combined = [...new Set([...fromInventory, ...fromOrders])].filter(Boolean);
+    res.json({ models: combined });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
+
 export const getSparePartNames = async (req, res) => {
   try {
-    const parts = await Inventory.find({ type: "SPARE" }).distinct("partName");
-
-    res.json({ parts });
+    const fromInventory = await Inventory.find({ type: "SPARE" }).distinct("partName");
+    const fromOrders = await Order.find({ orderType: "SPARE" }).distinct("chairModel");
+    const combined = [...new Set([...fromInventory, ...fromOrders])].filter(Boolean);
+    res.json({ parts: combined });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
