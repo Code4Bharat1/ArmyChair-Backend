@@ -294,62 +294,63 @@ export const updateOrder = async (req, res) => {
       });
     }
 
-    // if (order.progress !== "ORDER_PLACED") {
-    //   return res.status(403).json({
-    //     success: false,
-    //     message: "Order cannot be edited after warehouse processing",
-    //   });
-    // }
+    // ❌ Optional restriction (enable later)
+    // if (order.progress !== "ORDER_PLACED") { ... }
 
-    const allowedUpdates = [
-  "dispatchedTo",
-  "chairModel",
-  "orderDate",
-  "deliveryDate",
-  "quantity",
-  "remark", // ✅ ADD THIS
-];
+    // ===============================
+    // 🔥 HANDLE ITEMS FIRST
+    // ===============================
+    if (Array.isArray(req.body.items) && req.body.items.length > 0) {
+      order.items = req.body.items.map((i) => ({
+        name: String(i.name).trim(),
+        quantity: Number(i.quantity),
+      }));
 
-    const updates = {};
+      // 🔒 BACKWARD COMPAT
+      order.chairModel = order.items[0].name;
+      order.quantity = order.items[0].quantity;
+    }
 
-    for (const key of allowedUpdates) {
-      if (req.body[key] !== undefined) {
-        if (key === "quantity") {
-          updates[key] = Number(req.body[key]);
-        }
-        else if (key === "dispatchedTo") {
-          if (mongoose.Types.ObjectId.isValid(req.body[key])) {
-            updates[key] = req.body[key];
-          } else {
-            const vendor = await createVendor(req.body[key]);
-            updates[key] = vendor._id;
-          }
-        }
-        else {
-          updates[key] = req.body[key];
-        }
+    // ===============================
+    // 🔁 OTHER FIELDS
+    // ===============================
+    if (req.body.remark !== undefined) {
+      order.remark = req.body.remark;
+    }
+
+    if (req.body.orderDate) {
+      order.orderDate = req.body.orderDate;
+    }
+
+    if (req.body.deliveryDate) {
+      order.deliveryDate = req.body.deliveryDate;
+    }
+
+    if (req.body.dispatchedTo) {
+      if (mongoose.Types.ObjectId.isValid(req.body.dispatchedTo)) {
+        order.dispatchedTo = req.body.dispatchedTo;
+      } else {
+        const vendor = await createVendor(req.body.dispatchedTo);
+        order.dispatchedTo = vendor._id;
       }
     }
 
-    const updatedOrder = await Order.findByIdAndUpdate(
-      req.params.id,
-      updates,
-      { new: true, runValidators: true }
-    );
+    await order.save();
 
     await logActivity(req, {
       action: "ORDER_UPDATE",
       module: "Order",
       entityType: "Order",
-      entityId: updatedOrder._id,
-      description: `Order ${updatedOrder.orderId} updated for ${updatedOrder.chairModel} qty ${updatedOrder.quantity}`,
+      entityId: order._id,
+      description: `Order ${order.orderId} updated (${order.items.length} items)`,
     });
 
     res.status(200).json({
       success: true,
       message: "Order updated successfully",
-      order: updatedOrder,
+      order,
     });
+
   } catch (error) {
     console.error("UPDATE ORDER ERROR:", error);
     res.status(400).json({
