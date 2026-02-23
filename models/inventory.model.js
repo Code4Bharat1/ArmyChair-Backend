@@ -41,15 +41,22 @@ const inventorySchema = new mongoose.Schema(
   type: String,
   trim: true,
 },
+remark: {
+  type: String,
+  trim: true,
+  default: "",
+},
 
-
-    vendor: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Vendor",
-      required: function () {
-        return this.type === "FULL";
-      },
-    },
+mesh: {
+  type: String,
+  trim: true,
+  default: "",
+},
+vendor: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Vendor",
+  default: null,
+  },
 
     minQuantity: {
       type: Number,
@@ -71,7 +78,7 @@ const inventorySchema = new mongoose.Schema(
 
 // FULL chairs: unique per chairType + location
 inventorySchema.index(
-  { chairType: 1, location: 1 },
+  { chairType: 1, colour: 1, location: 1 },
   {
     unique: true,
     partialFilterExpression: { type: "FULL" },

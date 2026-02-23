@@ -136,8 +136,11 @@ export const dispatchOrderParts = async (req, res) => {
       }
     }
 
-    // 5️⃣ Update order progress
-    order.progress = "WAREHOUSE_COLLECTED";
+  if (order.orderType === "SPARE") {
+  order.progress = "READY_FOR_DISPATCH";
+} else {
+  order.progress = "WAREHOUSE_COLLECTED";
+}
     await order.save({ session });
 
     // 6️⃣ Commit transaction

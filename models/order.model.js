@@ -13,6 +13,21 @@ const orderSchema = new mongoose.Schema(
       ref: "Vendor",
       required: true,
     },
+    // After partialParts array, add:
+
+dispatchedQuantity: {
+  type: Number,
+  default: 0,
+},
+
+dispatches: [
+  {
+    quantity: { type: Number, required: true },
+    date: { type: Date, default: Date.now },
+    notes: { type: String },
+    dispatchedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  },
+],
 
     chairModel: {
       type: String,
@@ -68,21 +83,22 @@ items: {
       type: Boolean,
       default: false,
     },
-    progress: {
-      type: String,
-      enum: [
-        "ORDER_PLACED",
-        "PRODUCTION_PENDING",
-        "PRODUCTION_IN_PROGRESS",   
-        "PRODUCTION_COMPLETED",
-        "WAREHOUSE_COLLECTED",
-        "FITTING_IN_PROGRESS",
-        "FITTING_COMPLETED",
-        "READY_FOR_DISPATCH",
-        "DISPATCHED",
-        "PARTIAL",
-      ],
-    },
+   progress: {
+  type: String,
+  enum: [
+    "ORDER_PLACED",
+    "PRODUCTION_PENDING",
+    "PRODUCTION_IN_PROGRESS",
+    "PRODUCTION_COMPLETED",
+    "WAREHOUSE_COLLECTED",
+    "FITTING_IN_PROGRESS",
+    "FITTING_COMPLETED",
+    "READY_FOR_DISPATCH",
+    "DISPATCHED",
+    "PARTIAL",
+    "PARTIALLY_DISPATCHED",  // ← ADD THIS
+  ],
+},
 
 
     createdBy: {

@@ -1,9 +1,25 @@
 import express from "express";
 import { createInventory,getAllInventory, deleteInventory, updateInventory, createSpareParts
-     ,getSpareParts, updateSparePart, deleteSparePart, checkInventoryForOrder,getChairModels,getSparePartNames} from "../controllers/inventory.controller.js";
+     ,getSpareParts, updateSparePart, deleteSparePart, checkInventoryForOrder,getChairModels,getSparePartNames, bulkUploadSpareParts, bulkUploadFullChairs} from "../controllers/inventory.controller.js";
 import {protect} from "../middlewares/auth.middleware.js"
+import multer from "multer";
 
 const router = express.Router();
+
+const upload = multer();
+
+router.post(
+  "/spare-parts/bulk-upload",
+  protect,
+  upload.single("file"),
+  bulkUploadSpareParts
+);
+router.post(
+  "/full/bulk-upload",
+  protect,
+  upload.single("file"),
+  bulkUploadFullChairs
+);
 
 //Full Chairs
 router.post("/",protect, createInventory);

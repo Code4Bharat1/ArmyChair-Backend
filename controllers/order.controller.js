@@ -376,6 +376,7 @@ export const updateOrderProgress = async (req, res) => {
       "READY_FOR_DISPATCH",
       "DISPATCHED",
       "PARTIAL",
+      "PARTIALLY_DISPATCHED",  
     ];
 
     if (!allowed.includes(progress)) {
@@ -1093,6 +1094,70 @@ export const preDispatchEdit = async (req, res) => {
     res.status(500).json({ message: "Pre-dispatch edit failed" });
   }
 };
+export const partialDispatch = async (req, res) => {
+  try {
+    const { quantity, notes } = req.body;
 
+    if (!quantity || Number(quantity) <= 0) {
+      return res.status(400).json({ message: "Valid quantity required" });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    if (order.progress !== "READY_FOR_DISPATCH" && order.progress !== "PARTIALLY_DISPATCHED") {
+      return res.status(400).json({ message: "Order is not ready for dispatch" });
+    }
+
+    const totalOrderQty = order.items?.length
+      ? order.items.reduce((s, i) => s + i.quantity, 0)
+      : order.quantity;
+
+    const alreadyDispatched = order.dispatchedQuantity || 0;
+    const remaining = totalOrderQty - alreadyDispatched;
+
+    if (Number(quantity) > remaining) {
+      return res.status(400).json({
+        message: `Cannot dispatch ${quantity}. Only ${remaining} remaining.`,
+      });
+    }
+
+    // Record this dispatch batch
+    order.dispatches.push({
+      quantity: Number(quantity),
+      notes: notes || "",
+      dispatchedBy: req.user.id,
+      date: new Date(),
+    });
+
+    order.dispatchedQuantity = alreadyDispatched + Number(quantity);
+
+    // If fully dispatched now
+    if (order.dispatchedQuantity >= totalOrderQty) {
+      order.progress = "DISPATCHED";
+    } else {
+      order.progress = "PARTIALLY_DISPATCHED";
+    }
+
+    await order.save();
+
+    await logActivity(req, {
+      action: "ORDER_PARTIAL_DISPATCH",
+      module: "Order",
+      entityType: "Order",
+      entityId: order._id,
+      description: `Dispatched ${quantity} of ${totalOrderQty} for order ${order.orderId}`,
+    });
+
+    res.json({
+      success: true,
+      message: `Dispatched ${quantity}. ${order.dispatchedQuantity >= totalOrderQty ? "Order fully dispatched." : `${totalOrderQty - order.dispatchedQuantity} remaining.`}`,
+      order,
+    });
+  } catch (err) {
+    console.error("PARTIAL DISPATCH ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
 
 

@@ -13,6 +13,7 @@ import {
   assignProductionWorker,
   acceptProductionOrder,
   preDispatchEdit,
+  partialDispatch,
   
 } from "../controllers/order.controller.js";
 
@@ -61,6 +62,8 @@ router.put("/:id", protect, updateOrder);
 router.delete("/:id", protect, deleteOrder);
 router.patch("/:id/progress", protect, updateOrderProgress);
 router.get("/analytics/products", protect, productAnalytics);
+// routes/order.routes.js
+router.post("/:id/partial-dispatch", protect, partialDispatch);
 
 
 export default router;
