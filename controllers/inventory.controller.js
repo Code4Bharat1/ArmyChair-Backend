@@ -5,13 +5,16 @@ import { logActivity } from "../utils/logActivity.js";
 import XLSX from "xlsx";
 import Vendor from "../models/vendor.model.js";
 
-const getStockStatus = (qty, minQty = 1, maxQty) => {
-  if (qty === 0) return "Critical";
+const getStockStatus = (qty, minQty = 0, maxQty = null) => {
+  const quantity = Number(qty);
+  const min = Number(minQty || 0);
+  const max = maxQty !== undefined && maxQty !== null
+    ? Number(maxQty)
+    : null;
 
-  if (maxQty) {
-    if (qty < Math.ceil(maxQty * 0.2)) return "Low Stock";
-    if (qty > maxQty) return "Overstocked";
-  }
+  if (quantity < min) return "Critical";
+  if (quantity === min) return "Low Stock";
+  if (max !== null && quantity > max) return "Overstocked";
 
   return "Healthy";
 };
@@ -24,6 +27,8 @@ const COLUMN_MAP = {
   location: ["location", "loc", "rack", "bin"],
   quantity: ["quantity", "qty", "stock"],
   maxQuantity: ["maxquantity", "maxqty", "capacity"],
+  minQuantity: ["minquantity", "minqty", "minimum"],
+  chalanNo: ["chalano", "chalan", "billno", "bill", "invoiceno"],
 };
 const FULL_COLUMN_MAP = {
   chairType: ["chairname", "chair", "model", "product", "productname"],
@@ -34,6 +39,7 @@ const FULL_COLUMN_MAP = {
   remark: ["remark", "note", "comment"],
   location: ["location", "warehouse", "loc"],
   maxQuantity: ["maxquantity", "maxqty"],
+  chalanNo: ["chalano", "chalan", "billno", "bill", "bilno", "invoiceno"],
 };
 
 const getValue = (row, keys) => {
@@ -51,38 +57,34 @@ const getValue = (row, keys) => {
 //  CREATE INVENTORY ITEM
 export const createInventory = async (req, res) => {
   try {
+    // Destructure chalanNo from req.body
     const {
-      chairType,
-      colour,
-      mesh,          // ✅
-      remark,
-      vendor,
-      quantity,
-      minQuantity,
-      maxQuantity,
-      location,
-    } = req.body || {};
+  chairType,
+  colour,
+  mesh,
+  remark,
+  vendor,
+  quantity,
+  minQuantity,
+  maxQuantity,
+  location,
+  chalanNo,
+} = req.body || {};
 
 
-    if (
-      !chairType ||
-      !colour ||
-      quantity === undefined ||
-      minQuantity === undefined ||
-      !location
-    ) {
+
+    // Add to required fields check:
+    if (!chairType || !colour || quantity === undefined || minQuantity === undefined || !location || !chalanNo) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    if (vendor && !mongoose.Types.ObjectId.isValid(vendor)) {
-      return res.status(400).json({ message: "Invalid vendor ID" });
-    }
-
+    // Add to inventoryData object:
     const inventoryData = {
       chairType,
       colour,
       mesh: mesh?.trim() || "",
       remark: remark?.trim() || "",
+      chalanNo: chalanNo.trim(),   // ✅ ADD
       vendor,
       quantity: Number(quantity),
       minQuantity: Number(minQuantity),
@@ -91,28 +93,19 @@ export const createInventory = async (req, res) => {
       createdBy: req.user?.id,
       createdByRole: req.user?.role,
     };
-
     if (req.user?.role === "admin" && maxQuantity !== undefined) {
       inventoryData.maxQuantity = Number(maxQuantity);
     }
 
     const inventory = await Inventory.findOneAndUpdate(
-      {
-        chairType,
-        colour,
-        location,
-        type: "FULL",
-      },
+      { chairType, colour, location, vendor, type: "FULL" },
       {
         $inc: { quantity: Number(quantity) },
-
-        // ✅ ALWAYS update metadata
         $set: {
           mesh: mesh?.trim() || "",
           remark: remark?.trim() || "",
+          chalanNo: chalanNo.trim(),   // ✅ ADD — always update with latest
         },
-
-        // ✅ ONLY on first creation
         $setOnInsert: {
           chairType,
           colour,
@@ -148,10 +141,13 @@ export const createInventory = async (req, res) => {
 //  GET ALL INVENTORY
 export const getAllInventory = async (req, res) => {
   try {
-
-    const inventory = await Inventory.find({})
+    const inventory = await Inventory.find({
+      // ✅ Only show items physically at the warehouse
+      // Excludes FITTING_SECTION, PRODUCTION, etc.
+      locationType: { $nin: ["PRODUCTION", "FITTING"] },
+    })
       .populate("vendor", "name")
-      .collation({ locale: "en", strength: 2 }) // case-insensitive
+      .collation({ locale: "en", strength: 2 })
       .sort({
         chairType: 1,
         createdAt: -1,
@@ -159,20 +155,11 @@ export const getAllInventory = async (req, res) => {
 
     const data = inventory.map((i) => ({
       ...i.toObject(),
-      status:
-        i.type === "FULL"
-          ? getStockStatus(
-            i.quantity,
-            i.minQuantity,
-            i.maxQuantity
-          )
-          : getStockStatus(
-            i.quantity,
-            i.minQuantity || 1,
-            i.maxQuantity
-          ),
-
-
+      status: getStockStatus(
+        i.quantity,
+        i.minQuantity,
+        i.maxQuantity
+      ),
     }));
 
     res.status(200).json({
@@ -184,6 +171,31 @@ export const getAllInventory = async (req, res) => {
   }
 };
 
+export const getProductionInventory = async (req, res) => {
+  try {
+    const { location } = req.query; // optional: filter by specific PROD_ location
+
+    const filter = {
+      locationType: "PRODUCTION",
+      type: "SPARE",
+    };
+
+    if (location) {
+      filter.location = location;
+    }
+
+    const parts = await Inventory.find(filter)
+      .populate("vendor", "name")
+      .sort({ partName: 1 });
+
+    res.status(200).json({
+      success: true,
+      inventory: parts,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 //   UPDATE INVENTORY
 export const updateInventory = async (req, res) => {
   try {
@@ -230,6 +242,9 @@ export const updateInventory = async (req, res) => {
     }
     if (req.body.mesh !== undefined) {
       updateData.mesh = req.body.mesh?.trim() || "";
+    }
+    if (req.body.chalanNo !== undefined) {
+      updateData.chalanNo = req.body.chalanNo?.trim();
     }
 
     if (req.body.remark !== undefined) {
@@ -309,7 +324,16 @@ export const deleteInventory = async (req, res) => {
 
 export const createSpareParts = async (req, res) => {
   try {
-    const { partName, quantity, location, maxQuantity, remark, vendor } = req.body;
+    const {
+      partName,
+      quantity,
+      minQuantity,
+      location,
+      maxQuantity,
+      remark,
+      vendor,
+      chalanNo,
+    } = req.body;
 
     if (!partName || quantity == null || !location) {
       return res.status(400).json({
@@ -318,48 +342,63 @@ export const createSpareParts = async (req, res) => {
     }
 
     const qty = Number(quantity);
-
-    // ✅ NORMALIZE PART NAME (CASE-SAFE)
     const normalizedPartName = partName.trim();
+    const normalizedLocation = location.trim();
 
-    // ✅ DERIVE LOCATION TYPE (CRITICAL)
+    // ✅ Derive locationType from location string (mirrors the schema hook)
     let locationType = "WAREHOUSE";
-    if (location.startsWith("PROD_")) locationType = "PRODUCTION";
-    if (location.startsWith("FIT_")) locationType = "FITTING";
+    if (normalizedLocation.startsWith("PROD_")) locationType = "PRODUCTION";
+    if (normalizedLocation.startsWith("FIT_")) locationType = "FITTING";
 
-    const sparePart = await Inventory.findOneAndUpdate(
-      {
-        partName: normalizedPartName,
-        location: location.trim(),
-        type: "SPARE",
-      },
-      {
-        $inc: { quantity: qty },
-        $setOnInsert: {
-          partName: normalizedPartName,
-          location: location.trim(),
-          locationType,
-          type: "SPARE",
-          vendor, // ✅ ADD
-          remark: remark?.trim() || "",
-          maxQuantity:
-            req.user?.role === "admin" && maxQuantity !== undefined
-              ? Number(maxQuantity)
-              : 0,
-          createdBy: req.user?.id,
-          createdByRole: req.user?.role,
-        },
-      },
-      { new: true, upsert: true }
-    );
+    let vendorId = null;
+    if (vendor) {
+      if (mongoose.Types.ObjectId.isValid(vendor)) {
+        vendorId = vendor;
+      } else {
+        let vendorDoc = await Vendor.findOne({
+          name: new RegExp(`^${vendor.trim()}$`, "i"),
+        });
+        if (!vendorDoc) {
+          vendorDoc = await Vendor.create({ name: vendor.trim() });
+        }
+        vendorId = vendorDoc._id;
+      }
+    }
 
-    await logActivity(req, {
-      action: "INVENTORY_CREATE",
-      module: "Inventory",
-      entityType: "Inventory",
-      entityId: sparePart._id,
-      description: `Created spare part ${sparePart.partName} at ${sparePart.location}`,
-      destination: sparePart.location,
+    // ✅ Filter matches the unique index: partName + location + type only
+    const filter = {
+      partName: normalizedPartName,
+      location: normalizedLocation,
+      type: "SPARE",
+    };
+
+    const update = {
+  $inc: { quantity: qty },
+
+  $set: {
+    chalanNo: chalanNo?.trim() || "",
+    remark: remark?.trim() || "",
+  },
+
+  $setOnInsert: {
+    partName: normalizedPartName,
+    location: normalizedLocation,
+    locationType,
+    type: "SPARE",
+    minQuantity: Number(minQuantity || 0),
+    maxQuantity:
+      req.user?.role === "admin" && maxQuantity !== undefined
+        ? Number(maxQuantity)
+        : 0,
+    createdBy: req.user?.id,
+    createdByRole: req.user?.role,
+    ...(vendorId && { vendor: vendorId }), // ✅ ONLY HERE
+  },
+};
+
+    const sparePart = await Inventory.findOneAndUpdate(filter, update, {
+      new: true,
+      upsert: true,
     });
 
     res.status(201).json({
@@ -391,7 +430,7 @@ export const getSpareParts = async (req, res) => {
       ...p.toObject(),
       status: getStockStatus(
         p.quantity,
-        p.minQuantity || 1,
+        p.minQuantity,
         p.maxQuantity
       ),
     }));
@@ -408,7 +447,14 @@ export const getSpareParts = async (req, res) => {
 // Update
 export const updateSparePart = async (req, res) => {
   try {
-    const { partName, location, quantity, maxQuantity, remark } = req.body;
+    const {
+      partName,
+      location,
+      quantity,
+      minQuantity,   // ✅ ADD
+      maxQuantity,
+      remark
+    } = req.body;
 
     if (!partName || !location || quantity == null) {
       return res.status(400).json({
@@ -432,6 +478,12 @@ export const updateSparePart = async (req, res) => {
       updateData.maxQuantity = Number(maxQuantity);
     }
 
+    if (req.body.minQuantity !== undefined) {
+      updateData.minQuantity = Number(req.body.minQuantity);
+    }
+    if (req.body.chalanNo !== undefined) {
+      updateData.chalanNo = req.body.chalanNo?.trim();
+    }
     const updated = await Inventory.findOneAndUpdate(
       { _id: req.params.id, type: "SPARE" },
       updateData,
@@ -600,6 +652,8 @@ export const bulkUploadSpareParts = async (req, res) => {
       const location = getValue(row, COLUMN_MAP.location);
       const quantity = getValue(row, COLUMN_MAP.quantity);
       const maxQuantity = getValue(row, COLUMN_MAP.maxQuantity);
+      const minQuantity = getValue(row, COLUMN_MAP.minQuantity);
+      const chalanNo = getValue(row, COLUMN_MAP.chalanNo);
 
       // ✅ REQUIRED FIELDS ONLY
       if (!partName || !location || quantity == null) continue;
@@ -624,27 +678,33 @@ export const bulkUploadSpareParts = async (req, res) => {
         }
       }
 
-      await Inventory.findOneAndUpdate(
-        {
-          partName: partName.trim(),
-          location: location.trim(),
-          type: "SPARE",
-        },
-        {
-          $inc: { quantity: qty },
-          $setOnInsert: {
-            partName: partName.trim(),
-            location: location.trim(),
-            locationType,
-            vendor: vendorDoc?._id,
-            maxQuantity: maxQuantity ? Number(maxQuantity) : 0,
-            type: "SPARE",
-            createdBy: req.user.id,
-            createdByRole: req.user.role,
-          },
-        },
-        { upsert: true }
-      );
+    await Inventory.findOneAndUpdate(
+  {
+    partName: partName.trim(),
+    location: location.trim(),
+    type: "SPARE",
+  },
+  {
+    $inc: { quantity: qty },
+    $set: {
+      chalanNo: chalanNo?.trim() || "",
+      // ✅ REMOVED locationType from here
+      ...(vendorDoc && { vendor: vendorDoc._id }),
+    },
+    $setOnInsert: {
+      partName: partName.trim(),
+      location: location.trim(),
+      locationType, // ✅ Only here
+      type: "SPARE",
+      minQuantity: minQuantity ? Number(minQuantity) : 0,
+      maxQuantity: maxQuantity ? Number(maxQuantity) : 0,
+      createdBy: req.user.id,
+      createdByRole: req.user.role,
+      ...(vendorDoc && { vendor: vendorDoc._id }),
+    },
+  },
+  { upsert: true }
+);
 
       inserted++;
     }
@@ -676,6 +736,7 @@ export const bulkUploadFullChairs = async (req, res) => {
       const remark = getValue(row, FULL_COLUMN_MAP.remark);
       const location = getValue(row, FULL_COLUMN_MAP.location) || "WAREHOUSE";
       const maxQuantity = getValue(row, FULL_COLUMN_MAP.maxQuantity);
+      const chalanNo = getValue(row, FULL_COLUMN_MAP.chalanNo);
 
       if (!chairType || !quantity || !colour) continue;
 
@@ -697,6 +758,7 @@ export const bulkUploadFullChairs = async (req, res) => {
           chairType: chairType.trim(),
           colour: colour.trim(),
           location: location.trim(),
+          vendor: vendorDoc?._id, // ✅ FIX
           type: "FULL",
         },
         {
@@ -704,6 +766,7 @@ export const bulkUploadFullChairs = async (req, res) => {
           $set: {
             mesh: mesh?.trim() || "",
             remark: remark?.trim() || "",
+            chalanNo: chalanNo?.trim() || "",   // ✅ ADD
           },
           $setOnInsert: {
             vendor: vendorDoc?._id,
@@ -730,6 +793,20 @@ export const bulkUploadFullChairs = async (req, res) => {
     });
   } catch (err) {
     console.error("Bulk upload FULL chairs error", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// inventory.controller.js
+export const getInventoryLocations = async (req, res) => {
+  try {
+    const locations = await Inventory.distinct("location", {
+      locationType: "WAREHOUSE",   // ✅ THIS IS THE KEY
+    });
+
+    res.json({ locations });
+  } catch (err) {
+    console.error("GET LOCATIONS ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };

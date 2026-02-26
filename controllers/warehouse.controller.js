@@ -3,17 +3,72 @@ import Inventory from "../models/inventory.model.js";
 import ProductionInward from "../models/productionInward.model.js";
 import mongoose from "mongoose";
 import StockMovement from "../models/stockMovement.model.js";
-
+import User from "../models/User.model.js";
 import { logActivity } from "../utils/logActivity.js";
+// =====================================================
+// ADD THIS FUNCTION to your warehouse.controller.js
+// (or wherever your production inward create route points)
+// This is the POST /production/inward handler
+// =====================================================
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export const createProductionInward = async (req, res) => {
+  try {
+    const { partName, quantity, location, remark } = req.body;
+
+    if (!partName || !quantity || !location) {
+      return res.status(400).json({
+        success: false,
+        message: "partName, quantity and location are required",
+      });
+    }
+
+    // ✅ Find a warehouse user to assign to
+    const warehouseUser = await User.findOne({ role: "warehouse" });
+    if (!warehouseUser) {
+      return res.status(400).json({
+        success: false,
+        message: "No warehouse staff available to handle this request",
+      });
+    }
+
+    const inward = await ProductionInward.create({
+      partName: partName.trim(),
+      quantity: Number(quantity),
+      location: location.trim(),
+      remark: remark?.trim() || "",
+      createdBy: req.user.id,
+      assignedTo: warehouseUser._id, // ✅ Required field now set
+      status: "PENDING",
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Request sent to warehouse",
+      data: inward,
+    });
+
+  } catch (err) {
+    console.error("Create production inward error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+
+// =====================================================
+// ALSO UPDATE getPendingProductionInward to return remark
+// Replace your existing getPendingProductionInward with this:
+// =====================================================
+
 export const getPendingProductionInward = async (req, res) => {
   try {
     const data = await ProductionInward.find({
       status: "PENDING",
-      assignedTo: req.user.id, // 🔥 VERY IMPORTANT
+      assignedTo: req.user.id,
     })
-      .populate("createdBy", "name") // 🔥 REQUIRED FOR UI
+      .populate("createdBy", "name")
       .sort({ createdAt: -1 });
 
+    // remark is already on the document, no extra change needed
     res.json({
       success: true,
       data,
@@ -26,6 +81,27 @@ export const getPendingProductionInward = async (req, res) => {
     });
   }
 };
+// export const getPendingProductionInward = async (req, res) => {
+//   try {
+//     const data = await ProductionInward.find({
+//       status: "PENDING",
+//       assignedTo: req.user.id, // 🔥 VERY IMPORTANT
+//     })
+//       .populate("createdBy", "name") // 🔥 REQUIRED FOR UI
+//       .sort({ createdAt: -1 });
+
+//     res.json({
+//       success: true,
+//       data,
+//     });
+//   } catch (err) {
+//     console.error("Pending inward error:", err);
+//     res.status(500).json({
+//       success: false,
+//       message: err.message,
+//     });
+//   }
+// };
 
 export const getOrderPickData = async (req, res) => {
   try {
@@ -172,6 +248,55 @@ export const dispatchOrderParts = async (req, res) => {
     });
   }
 };
+// =====================================================
+// 1. ADD THIS TEMPORARY DEBUG ROUTE to your warehouse routes
+//    GET /warehouse/debug/inventory/:partName
+//    Use it to see exactly what MongoDB has for that item
+// =====================================================
+
+export const debugInventorySearch = async (req, res) => {
+  try {
+    const { partName } = req.params;
+    const nameRegex = { $regex: `^${escapeRegex(partName.trim())}$`, $options: "i" };
+
+    // Search ALL inventory records matching this name in any field
+    const allMatches = await Inventory.find({
+      $or: [
+        { partName: nameRegex },
+        { chairType: nameRegex },
+      ],
+    }).lean();
+
+    // Also search WAREHOUSE specifically
+    const warehouseMatches = await Inventory.find({
+      $or: [
+        { partName: nameRegex },
+        { chairType: nameRegex },
+      ],
+      locationType: "WAREHOUSE",
+    }).lean();
+
+    res.json({
+      searchedFor: partName,
+      totalFound: allMatches.length,
+      warehouseFound: warehouseMatches.length,
+      allRecords: allMatches.map((i) => ({
+        _id:          i._id,
+        partName:     i.partName,
+        chairType:    i.chairType,
+        type:         i.type,
+        location:     i.location,
+        locationType: i.locationType,
+        quantity:     i.quantity,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+
+
 export const acceptProductionInward = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -183,79 +308,111 @@ export const acceptProductionInward = async (req, res) => {
       throw new Error("Invalid or already processed request");
     }
 
-    if (String(inward.assignedTo) !== String(req.user.id)) {
+    // ── Ownership check ──────────────────────────────────────────
+    // Only enforce if assignedTo is actually set on the record
+    if (inward.assignedTo && String(inward.assignedTo) !== String(req.user.id)) {
       throw new Error("You are not assigned to this request");
     }
 
-    // 1️⃣ Find warehouse stock
-    const warehouseStock = await Inventory.findOne({
-      partName: {
-        $regex: `^${inward.partName}$`,
-        $options: "i"
-      },
-      type: "SPARE",
+   const searchName = inward.partName.trim();
+const nameRegex  = { $regex: `^${escapeRegex(searchName)}$`, $options: "i" };
+
+    // ── Find warehouse stock ─────────────────────────────────────
+    // Search by chairType OR partName (covers both FULL and SPARE)
+    // Exclude stock already sitting in PRODUCTION or FITTING locations
+    let warehouseStock = await Inventory.findOne({
+      $or: [
+        { partName:  nameRegex },
+        { chairType: nameRegex },
+      ],
       locationType: { $nin: ["PRODUCTION", "FITTING"] },
-      quantity: { $gte: inward.quantity }
+      quantity: { $gte: inward.quantity },
     })
       .sort({ quantity: -1 })
       .session(session);
 
-    if (!warehouseStock) throw new Error("Warehouse stock not found");
+    // ── Fallback: try partial / trimmed name match ───────────────
+    if (!warehouseStock) {
+      const partialRegex = { $regex: escapeRegex(searchName), $options: "i" };
+      warehouseStock = await Inventory.findOne({
+        $or: [
+          { partName:  partialRegex },
+          { chairType: partialRegex },
+        ],
+        locationType: { $nin: ["PRODUCTION", "FITTING"] },
+        quantity: { $gte: inward.quantity },
+      })
+        .sort({ quantity: -1 })
+        .session(session);
+    }
 
-    // 2️⃣ Deduct from warehouse
+    if (!warehouseStock) {
+      // Give a helpful error showing what was searched
+      const allRecords = await Inventory.find({
+        $or: [
+          { partName:  { $regex: searchName, $options: "i" } },
+          { chairType: { $regex: searchName, $options: "i" } },
+        ],
+      }).lean();
+
+      const debugInfo = allRecords.length
+        ? `Found ${allRecords.length} partial match(es) but none at WAREHOUSE with qty ≥ ${inward.quantity}: ` +
+          allRecords.map((r) => `[${r.partName || r.chairType} | ${r.locationType} | qty:${r.quantity}]`).join(", ")
+        : `No inventory records found matching "${searchName}" in any field or location`;
+
+      throw new Error(debugInfo);
+    }
+
+    // ── Deduct from source stock ─────────────────────────────────
     warehouseStock.quantity -= inward.quantity;
     await warehouseStock.save({ session });
 
-    // 3️⃣ Add to production (FIXED HERE)
+    // ── Determine destination locationType ──────────────────────
+    const targetLocationType =
+      inward.location.startsWith("PROD_")
+        ? "PRODUCTION"
+        : inward.location.startsWith("FIT_") || inward.location === "FITTING_SECTION"
+        ? "FITTING"
+        : "WAREHOUSE";
+
+    // ── Add to destination ───────────────────────────────────────
+    // Use the same field name that exists on the source record
+    const destFieldName  = warehouseStock.chairType ? "chairType" : "partName";
+    const destFieldValue = warehouseStock.chairType || warehouseStock.partName;
+
     await Inventory.findOneAndUpdate(
-  {
-    partName: {
-      $regex: `^${inward.partName}$`,
-      $options: "i"
-    },
-    type: "SPARE",
-    location: inward.location,
-  },
-  {
-    $inc: { quantity: inward.quantity },
-    $setOnInsert: {
-      partName: inward.partName,
-      type: "SPARE",
-      location: inward.location,
+      { [destFieldName]: { $regex: `^${escapeRegex(destFieldValue.trim())}$`, $options: "i" }, location: inward.location },
+      {
+        $inc: { quantity: inward.quantity },
+        $setOnInsert: {
+          [destFieldName]: destFieldValue,
+          type:            warehouseStock.type,
+          location:        inward.location,
+          locationType:    targetLocationType,
+          colour:          warehouseStock.colour || "",
+          mesh:            warehouseStock.mesh   || "",
+          maxQuantity:     0,
+          minQuantity:     0,
+        },
+      },
+      { upsert: true, session, runValidators: true }
+    );
 
-      locationType:
-        inward.location.startsWith("PROD_")
-          ? "PRODUCTION"
-          : inward.location.startsWith("FIT_")
-          ? "FITTING"
-          : "WAREHOUSE",
-
-      maxQuantity: 0,
-    },
-  },
-  {
-    upsert: true,
-    session,
-    runValidators: true,
-  }
-);
-
-
-    // 4️⃣ Save movement
+    // ── Stock movement log ───────────────────────────────────────
     await StockMovement.create(
       [{
-        partName: inward.partName,
+        partName:     searchName,
         fromLocation: warehouseStock.location,
-        toLocation: inward.location,
-        quantity: inward.quantity,
-        movedBy: req.user.id,
-        reason: "TRANSFER",
+        toLocation:   inward.location,
+        quantity:     inward.quantity,
+        movedBy:      req.user.id,
+        reason:       "TRANSFER",
       }],
       { session }
     );
 
-    // 5️⃣ Update inward
-    inward.status = "ACCEPTED";
+    // ── Complete the inward request ──────────────────────────────
+    inward.status     = "ACCEPTED";
     inward.approvedBy = req.user.id;
     await inward.save({ session });
 
@@ -263,18 +420,18 @@ export const acceptProductionInward = async (req, res) => {
     session.endSession();
 
     await logActivity(req, {
-      action: "PRODUCTION_REQUEST_APPROVED",
-      module: "Warehouse",
-      entityType: "ProductionInward",
-      entityId: inward._id,
-      description: `Transferred ${inward.quantity} ${inward.partName} to ${inward.location}`,
+      action:         "PRODUCTION_REQUEST_APPROVED",
+      module:         "Warehouse",
+      entityType:     "ProductionInward",
+      entityId:       inward._id,
+      description:    `Transferred ${inward.quantity} × ${searchName} to ${inward.location}`,
       sourceLocation: warehouseStock.location,
-      destination: inward.location,
+      destination:    inward.location,
     });
 
     res.json({
       success: true,
-      message: "Stock transferred to production",
+      message: `✓ ${inward.quantity} × ${searchName} transferred to ${inward.location}`,
     });
 
   } catch (err) {
@@ -287,9 +444,6 @@ export const acceptProductionInward = async (req, res) => {
     });
   }
 };
-
-
-
 
 export const getOrderInventoryPreview = async (req, res) => {
   try {

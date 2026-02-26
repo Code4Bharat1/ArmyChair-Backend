@@ -3,286 +3,282 @@ import Inventory from "../models/inventory.model.js";
 import Order from "../models/order.model.js";
 import BadReturn from "../models/badReturn.model.js";
 import User from "../models/User.model.js";
-import ProductionInward from "../models/productionInward.model.js";
-/**
- * CREATE RETURN ORDER
- * POST /api/returns
- */
+// ✅ ProductionInward import removed — returns do NOT create inward requests
 
-
+// ─── createReturn ───────────────────────────────────────────────
 export const createReturn = async (req, res) => {
   try {
-    const { orderId, returnDate, category, description } = req.body;
+    const { orderId, returnDate, category, description, items } = req.body;
 
-    if (!orderId || !returnDate || !category) {
+    if (!orderId || !returnDate || !category || !items?.length) {
       return res.status(400).json({ message: "Required fields missing" });
     }
 
-    // 1️⃣ Fetch order
     const order = await Order.findOne({ orderId });
+    if (!order) return res.status(404).json({ message: "Order not found" });
 
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+    if (order.progress !== "DISPATCHED") {
+      return res.status(400).json({ message: "Return allowed only for dispatched orders" });
     }
 
-if (order.progress !== "DISPATCHED") {
-  return res.status(400).json({
-    message: "Return allowed only for dispatched orders",
-  });
-}
+    // Allow multiple returns per order BUT prevent duplicate category for same order
+    const exists = await Return.findOne({ orderId, category });
+    if (exists) return res.status(409).json({
+      message: `A ${category} return already exists for order ${orderId}`,
+    });
 
-    // 2️⃣ Prevent duplicate returns
-    const exists = await Return.findOne({ orderId });
-    if (exists) {
-      return res.status(409).json({ message: "Return already exists" });
+    // Validate each returned SKU against order items
+    const orderItems = order.items?.length
+      ? order.items
+      : [{ name: order.chairModel, quantity: order.quantity }];
+
+    for (const retItem of items) {
+      const match = orderItems.find(
+        (i) => i.name.toLowerCase().trim() === retItem.name.toLowerCase().trim()
+      );
+      if (!match) {
+        return res.status(400).json({ message: `Item not in order: ${retItem.name}` });
+      }
+      if (retItem.quantity > match.quantity) {
+        return res.status(400).json({
+          message: `${retItem.name}: Cannot return ${retItem.quantity}, only ${match.quantity} was ordered`,
+        });
+      }
     }
 
-    // 🔍 HARD LOG (important)
-    console.log("ORDER DISPATCHED TO:", order.dispatchedTo);
+    const totalQty = items.reduce((s, i) => s + i.quantity, 0);
+    const chairTypeLabel = items.map((i) => `${i.name} (x${i.quantity})`).join(", ");
 
-    // 3️⃣ Create return
-    const returnItem = await Return.create({
-      orderId: order.orderId,
-      chairType: order.chairModel,
-      quantity: order.quantity,
+    const returnDoc = await Return.create({
+      orderId:      order.orderId,
+      chairType:    chairTypeLabel,
+      items:        items.map((i) => ({
+        name:          i.name,
+        quantity:      i.quantity,
+        fittingStatus: "PENDING",
+      })),
+      quantity:     totalQty,
       returnDate,
       deliveryDate: order.deliveryDate,
       category,
-      vendor: order.salesPerson?.name || "Unknown",
-      location: order.dispatchedTo,
-      returnedFrom: order.dispatchedTo || "Unknown", // ✅ ABSOLUTE FIX
+      vendor:       order.salesPerson?.name || "Unknown",
+      location:     order.dispatchedTo,
+      returnedFrom: order.dispatchedTo || "Unknown",
       description,
     });
 
-    res.status(201).json({
-      message: "Return created from order",
-      data: returnItem,
-    });
-
+    res.status(201).json({ message: "Return created", data: returnDoc });
   } catch (error) {
     console.error("Create return error:", error);
     res.status(500).json({ message: error.message });
   }
 };
 
-
-
-/* GET ALL RETURNS*/
+// ─── getAllReturns ───────────────────────────────────────────────
 export const getAllReturns = async (req, res) => {
   try {
     const { status } = req.query;
-
     const filter = {};
-
-    // Apply status filter if provided
-    if (status) {
-      filter.status = status;
-    }
+    if (status) filter.status = status;
 
     const returns = await Return.find(filter)
       .populate("returnedFrom", "name")
       .sort({ createdAt: -1 });
 
-    const formatted = returns.map(r => ({
-      _id: r._id,
-      orderId: r.orderId,
-      chairType: r.chairType,
-      quantity: r.quantity,
-      returnedFrom: r.returnedFrom,
-      deliveryDate: r.deliveryDate,
-      returnDate: r.returnDate,
-      category: r.category,
-      status: r.status,
+    const formatted = returns.map((r) => ({
+      _id:              r._id,
+      orderId:          r.orderId,
+      chairType:        r.chairType,
+      items:            r.items || [],
+      quantity:         r.quantity,
+      returnedFrom:     r.returnedFrom,
+      deliveryDate:     r.deliveryDate,
+      returnDate:       r.returnDate,
+      category:         r.category,
+      status:           r.status,
+      description:      r.description,
+      movedToInventory: r.movedToInventory,
     }));
 
-    res.status(200).json({
-      success: true,
-      data: formatted
-    });
-
+    res.status(200).json({ success: true, data: formatted });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
+// ─── getReturnById ───────────────────────────────────────────────
+export const getReturnById = async (req, res) => {
+  try {
+    const returnItem = await Return.findById(req.params.id).populate("returnedFrom", "name");
+    if (!returnItem) return res.status(404).json({ message: "Return not found" });
+    res.status(200).json({ success: true, data: returnItem });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 
+// ─── moveReturnToInventory ───────────────────────────────────────
+export const moveReturnToInventory = async (req, res) => {
+  try {
+    const returnItem = await Return.findById(req.params.id);
+    if (!returnItem) return res.status(404).json({ message: "Return not found" });
 
-/**
- * MOVE RETURN TO INVENTORY
- * POST /api/returns/:id/move-to-inventory
- */
-// export const moveReturnToInventory = async (req, res) => {
-//   try {
-//     const returnItem = await Return.findById(req.params.id);
+    if (returnItem.status !== "Accepted") {
+      return res.status(400).json({ message: `Cannot add to inventory. Status: ${returnItem.status}` });
+    }
+    if (returnItem.movedToInventory) {
+      return res.status(400).json({ message: "Already moved to inventory" });
+    }
 
-//     if (!returnItem) {
-//       return res.status(404).json({ message: "Return item not found" });
-//     }
+    const goodItems = returnItem.items?.length
+      ? returnItem.items.filter((i) => i.fittingStatus === "GOOD")
+      : [{ name: returnItem.chairType, quantity: returnItem.quantity }];
 
-//     if (returnItem.movedToInventory) {
-//       return res.status(400).json({ message: "Already moved to inventory" });
-//     }
+    if (!goodItems.length) {
+      return res.status(400).json({ message: "No GOOD items to move to inventory" });
+    }
 
-//     if (returnItem.category !== "Functional") {
-//       return res.status(400).json({
-//         message: "Only Functional items can be moved to inventory",
-//       });
-//     }
+    for (const item of goodItems) {
+      await Inventory.findOneAndUpdate(
+        { chairType: item.name, colour: "Returned", location: "WAREHOUSE", type: "FULL" },
+        {
+          $inc: { quantity: item.quantity },
+          $setOnInsert: {
+            chairType:     item.name,
+            colour:        "Returned",
+            location:      "WAREHOUSE",
+            type:          "FULL",
+            minQuantity:   0,
+            maxQuantity:   0,
+            remark:        `Returned from ${returnItem.returnedFrom || "Unknown"}`,
+            createdBy:     req.user?.id,
+            createdByRole: req.user?.role,
+          },
+        },
+        { new: true, upsert: true }
+      );
+    }
 
-//     await Inventory.create({
-//       chairType: returnItem.chairType,
-//       color: "Returned",
-//       vendor: returnItem.vendor,
-//       quantity: returnItem.quantity,
-//       minQuantity: 1,
-//     });
+    returnItem.movedToInventory = true;
+    returnItem.status = "Completed";
+    await returnItem.save();
 
-//     returnItem.movedToInventory = true;
-//     await returnItem.save();
+    res.status(200).json({ success: true, message: "GOOD items added to inventory" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 
-//     res.status(200).json({
-//       message: "Moved to inventory successfully",
-//     });
-
-//   } catch (error) {
-//     console.error("Move to inventory failed:", error);
-//     res.status(500).json({ message: error.message });
-//   }
-// };
-
+// ─── moveReturnToFitting ─────────────────────────────────────────
 export const moveReturnToFitting = async (req, res) => {
   try {
     const returnItem = await Return.findById(req.params.id);
-
-    if (!returnItem) {
-      return res.status(404).json({ message: "Return item not found" });
-    }
+    if (!returnItem) return res.status(404).json({ message: "Return item not found" });
 
     if (returnItem.status !== "Pending") {
-      return res.status(400).json({
-        message: "Return is already processed",
-      });
+      return res.status(400).json({ message: "Return is already processed" });
     }
-
-    // if (returnItem.category !== "Functional") {
-    //   return res.status(400).json({
-    //     message: "Only Functional items can be sent to fitting",
-    //   });
-    // }
 
     returnItem.status = "In-Fitting";
     await returnItem.save();
 
-    res.status(200).json({
-      message: "Return moved to fitting successfully",
-    });
-
+    res.status(200).json({ message: "Return moved to fitting successfully" });
   } catch (error) {
     console.error("Move to fitting error:", error);
     res.status(500).json({ message: error.message });
   }
 };
+
+// ─── fittingDecision ─────────────────────────────────────────────
 export const fittingDecision = async (req, res) => {
   try {
-    const { decision, remarks, inventoryType, assignedTo } = req.body;
+    const { decisions, assignedTo } = req.body;
 
-    const returnItem = await Return.findById(req.params.id);
-    if (!returnItem) {
-      return res.status(404).json({ message: "Return not found" });
+    if (!decisions?.length) {
+      return res.status(400).json({ message: "decisions array required" });
     }
 
-    // ✅ Prevent reprocessing
-    // 🔒 STRICT lifecycle check
+    const returnItem = await Return.findById(req.params.id);
+    if (!returnItem) return res.status(404).json({ message: "Return not found" });
+
     if (returnItem.status !== "In-Fitting") {
       return res.status(400).json({
         message: `Return cannot be processed. Current status: ${returnItem.status}`,
       });
     }
 
-
-    /* ================= REJECT ================= */
-    if (decision === "Rejected") {
-      returnItem.status = "Rejected";
-      returnItem.fittingDecision = "Rejected";
-      returnItem.fittingRemarks = remarks || "";
-      await returnItem.save();
-
-      return res.json({
-        success: true,
-        message: "Return rejected successfully",
-      });
+    // Validate: GOOD items need a warehouse assignee
+    const hasGood = decisions.some((d) => d.decision === "GOOD");
+    if (hasGood) {
+      if (!assignedTo) {
+        return res.status(400).json({ message: "Warehouse staff must be assigned for GOOD items" });
+      }
+      const warehouseUser = await User.findById(assignedTo);
+      if (!warehouseUser || warehouseUser.role !== "warehouse") {
+        return res.status(400).json({ message: "Invalid warehouse user" });
+      }
     }
 
-// ================= ACCEPT FLOW =================
-if (decision === "Accepted") {
+    // Apply per-SKU decisions
+    for (const dec of decisions) {
+      const itemIdx = returnItem.items.findIndex(
+        (i) => i.name.toLowerCase().trim() === dec.name.toLowerCase().trim()
+      );
+      if (itemIdx === -1) {
+        return res.status(400).json({ message: `Item not found in return: ${dec.name}` });
+      }
+      returnItem.items[itemIdx].fittingStatus  = dec.decision; // "GOOD" | "BAD"
+      returnItem.items[itemIdx].fittingRemarks = dec.remarks || "";
+    }
 
-  if (!inventoryType) {
-    return res.status(400).json({
-      message: "Inventory type is required",
-    });
-  }
+    // ✅ BAD items → create BadReturn record
+    const badDecisions = decisions.filter((d) => d.decision === "BAD");
+    for (const bad of badDecisions) {
+      const item = returnItem.items.find(
+        (i) => i.name.toLowerCase().trim() === bad.name.toLowerCase().trim()
+      );
+      if (!item) continue;
+      const alreadyExists = await BadReturn.findOne({
+        orderId:   returnItem.orderId,
+        chairType: item.name,
+      });
+      if (!alreadyExists) {
+        await BadReturn.create({
+          orderId:      returnItem.orderId,
+          chairType:    item.name,
+          quantity:     item.quantity,
+          reason:       bad.remarks || "",
+          returnedFrom: returnItem.returnedFrom,
+          createdBy:    req.user.id,
+        });
+      }
+    }
 
-  returnItem.fittingDecision = "Accepted";
-  returnItem.fittingRemarks = remarks || "";
+    // ✅ GOOD items — NO ProductionInward created.
+    // The return status becomes "Accepted" below, which is how the
+    // warehouse discovers these items in their "Returns to Inventory" tab.
+    // They will call POST /returns/:id/move-to-inventory when ready.
 
-  // ---------- BAD ----------
-  if (inventoryType === "BAD") {
-    returnItem.status = "Bad-Inventory";
+    // Derive overall return status from all item decisions
+    const allItems   = returnItem.items;
+    const allDecided = allItems.every((i) => i.fittingStatus !== "PENDING");
+    const allBad     = allItems.every((i) => i.fittingStatus === "BAD");
+    const anyGood    = allItems.some((i)  => i.fittingStatus === "GOOD");
+
+    if (allDecided) {
+      if (allBad)       returnItem.status = "Rejected";
+      else if (anyGood) returnItem.status = "Accepted"; // ← warehouse sees this in Returns tab
+    }
+
+    returnItem.markModified("items");
     await returnItem.save();
 
-    const exists = await BadReturn.findOne({ orderId: returnItem.orderId });
-    if (!exists) {
-      await BadReturn.create({
-        orderId: returnItem.orderId,
-        chairType: returnItem.chairType,
-        quantity: returnItem.quantity,
-        reason: remarks,
-        returnedFrom: returnItem.returnedFrom,
-        createdBy: req.user.id,
-      });
-    }
-
-    return res.json({
-      success: true,
-      message: "Marked as bad inventory",
+    res.json({
+      success:      true,
+      message:      "Fitting decisions saved",
+      pendingCount: allItems.filter((i) => i.fittingStatus === "PENDING").length,
+      status:       returnItem.status,
     });
-  }
-
-  // ---------- GOOD ----------
-  if (inventoryType === "GOOD") {
-
-    if (!assignedTo) {
-      return res.status(400).json({
-        message: "Warehouse staff must be assigned",
-      });
-    }
-
-    const warehouseUser = await User.findById(assignedTo);
-    if (!warehouseUser || warehouseUser.role !== "warehouse") {
-      return res.status(400).json({
-        message: "Invalid warehouse user",
-      });
-    }
-
-    returnItem.status = "Accepted";
-    await returnItem.save();
-
-    await ProductionInward.create({
-      partName: returnItem.chairType,
-      quantity: returnItem.quantity,
-      location: returnItem.returnedFrom, // ✅ REQUIRED FIX
-      assignedTo,
-      createdBy: req.user.id,
-      status: "PENDING",
-    });
-
-    return res.json({
-      success: true,
-      message: "Return sent to warehouse for approval",
-    });
-  }
-}
-
   } catch (error) {
     console.error("Fitting decision error:", error);
     res.status(500).json({ message: error.message });

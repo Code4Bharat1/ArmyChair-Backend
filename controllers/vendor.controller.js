@@ -10,7 +10,29 @@ export const getVendors = async (req, res) => {
     return res.status(500).json({ message: "Failed to fetch vendors" });
   }
 };
+/* ================= CREATE VENDOR (API) ================= */
+export const createVendorApi = async (req, res) => {
+  try {
+    const { name } = req.body;
 
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: "Vendor name is required" });
+    }
+
+    const vendor = await createVendor(name);
+
+    return res.status(201).json({
+      success: true,
+      vendor,
+    });
+  } catch (err) {
+    console.error("CREATE VENDOR ERROR:", err.message);
+
+    return res.status(400).json({
+      message: err.message || "Failed to create vendor",
+    });
+  }
+};
 /* ================= CREATE VENDOR IF NOT EXISTS ================= */
 // ⚠️ INTERNAL UTILITY — DO NOT USE DIRECTLY FROM ROUTES
 export const createVendor = async (name) => {

@@ -10,7 +10,10 @@ const productionInwardSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-
+remark: {
+  type: String,
+  default: "",
+},
     status: {
       type: String,
       enum: ["PENDING", "ACCEPTED", "REJECTED"],

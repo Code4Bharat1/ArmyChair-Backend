@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import Order from "../models/order.model.js";
 import { createVendor } from "./vendor.controller.js";
 import { logActivity } from "../utils/logActivity.js";
+import Inventory from "../models/inventory.model.js";
 import XLSX from "xlsx";
 
 
@@ -48,17 +49,32 @@ const COLUMN_MAP = {
     "units",
   ],
 };
+
+// ============================================================
+// 🔥 FIX: Strip " (colour)" suffix from item names like
+//    "2020 CHAIR BLACK (black)" → "2020 CHAIR BLACK"
+//    so inventory lookup matches chairType correctly.
+// ============================================================
+function stripColourSuffix(name = "") {
+  // Removes a trailing " (anything)" — case insensitive
+  return name.replace(/\s*\([^)]*\)\s*$/, "").trim();
+}
+
+// Extract just the colour from a name like "2020 CHAIR BLACK (black)" → "black"
+function extractColour(name = "") {
+  const match = name.match(/\(([^)]+)\)\s*$/);
+  return match ? match[1].trim().toLowerCase() : null;
+}
+
 // 🔥 NORMALIZE ITEMS (BACKWARD COMPATIBLE)
 function normalizeOrderItems(order) {
-  // If new multi-item order already exists
   if (order.items && order.items.length) return;
-
-  // Old single-item order → convert logically
   if (order.chairModel && order.quantity) {
     order.items = [
       {
         name: order.chairModel,
         quantity: order.quantity,
+        fittingStatus: "PENDING",
       },
     ];
   }
@@ -66,28 +82,25 @@ function normalizeOrderItems(order) {
 
 const createOrderInternal = async ({ row, user }) => {
   const {
-  dispatchedTo,
-  chairModel,
-  items,              // ✅ ADD
-  orderType = "FULL",
-  orderDate,
-  remark,
-  deliveryDate,
-  quantity,
-  salesPerson,
-} = row;
+    dispatchedTo,
+    chairModel,
+    items,
+    orderType = "FULL",
+    orderDate,
+    remark,
+    deliveryDate,
+    quantity,
+    salesPerson,
+  } = row;
 
   if (
-  !dispatchedTo ||
-  !orderDate ||
-  !deliveryDate ||
-  (
-    (!items || !items.length) &&
-    (!chairModel || !quantity)
-  )
-) {
-  throw new Error("Missing required fields");
-}
+    !dispatchedTo ||
+    !orderDate ||
+    !deliveryDate ||
+    ((!items || !items.length) && (!chairModel || !quantity))
+  ) {
+    throw new Error("Missing required fields");
+  }
 
   let vendorId;
   if (mongoose.Types.ObjectId.isValid(dispatchedTo)) {
@@ -96,46 +109,106 @@ const createOrderInternal = async ({ row, user }) => {
     const vendor = await createVendor(dispatchedTo);
     vendorId = vendor._id;
   }
+
+  // ============================================================
+  // 🔥 SMART ROUTING: FULL order → check FULL inventory
+  // ============================================================
   let initialProgress;
 
-  if (orderType === "FULL") {
-    initialProgress = "PRODUCTION_PENDING";
-  } else {
+  if (orderType === "SPARE") {
+    // Spare orders always go to ORDER_PLACED (warehouse handles)
     initialProgress = "ORDER_PLACED";
+
+  } else {
+    // FULL order — normalize items array
+    const orderItems =
+      items && items.length > 0
+        ? items
+        : [{ name: chairModel, quantity: Number(quantity) }];
+
+    let allInStock = true;
+
+    for (const item of orderItems) {
+      // ✅ FIX: Strip " (colour)" suffix before querying inventory
+      // Frontend sends "2020 CHAIR BLACK (black)" but DB stores "2020 CHAIR BLACK"
+      const baseChairType = stripColourSuffix(item.name);
+      const colour = extractColour(item.name);
+
+      // Build query: match chairType (stripped name) + optionally colour
+      const inventoryQuery = {
+        type: "FULL",
+        chairType: { $regex: new RegExp(`^${baseChairType}$`, "i") },
+        quantity: { $gt: 0 },
+      };
+
+      // If a colour was specified, filter by it too
+      if (colour) {
+        inventoryQuery.colour = { $regex: new RegExp(`^${colour}$`, "i") };
+      }
+
+      const inventoryRecords = await Inventory.find(inventoryQuery).sort({ quantity: -1 });
+
+      const totalAvailable = inventoryRecords.reduce(
+        (sum, r) => sum + r.quantity,
+        0
+      );
+
+      console.log(
+        `[Stock Check] "${item.name}" → base: "${baseChairType}", colour: "${colour}", ` +
+        `available: ${totalAvailable}, needed: ${item.quantity}`
+      );
+
+      if (totalAvailable < item.quantity) {
+        allInStock = false;
+        break;
+      }
+    }
+
+    if (allInStock) {
+      // ✅ Stock available → send directly to warehouse, skip production
+      // Inventory deduction happens at dispatch time (not here)
+      initialProgress = "WAREHOUSE_COLLECTED";
+      console.log(`[Smart Routing] Order routed to WAREHOUSE_COLLECTED (stock available)`);
+    } else {
+      // ❌ Stock insufficient → normal production flow
+      initialProgress = "PRODUCTION_PENDING";
+      console.log(`[Smart Routing] Order routed to PRODUCTION_PENDING (stock insufficient)`);
+    }
   }
 
+  // ============================================================
+  // Create the order
+  // ============================================================
   const creatorId = user.id || user._id;
   const assignedSalesPerson =
     user.role === "admin" ? salesPerson || creatorId : creatorId;
 
- const order = await Order.create({
-  dispatchedTo: vendorId,
-  chairModel,
-  quantity: quantity ? Number(quantity) : undefined,
-  items, // ✅ NEW
-  orderType,
-  orderDate,
-  deliveryDate,
-  remark,
-  isPartial: false,
-  createdBy: creatorId,
-  salesPerson: assignedSalesPerson,
-  progress: initialProgress,
-});
+  const order = await Order.create({
+    dispatchedTo: vendorId,
+    chairModel,
+    quantity: quantity ? Number(quantity) : undefined,
+    items,
+    orderType,
+    orderDate,
+    deliveryDate,
+    remark,
+    isPartial: false,
+    createdBy: creatorId,
+    salesPerson: assignedSalesPerson,
+    progress: initialProgress,
+    // ✅ Flag so frontend can show "Warehouse Direct" badge
+    warehouseDirect: initialProgress === "WAREHOUSE_COLLECTED",
+  });
 
-// 🔥 CRITICAL
-normalizeOrderItems(order);
-await order.save();
+  normalizeOrderItems(order);
+  await order.save();
 
-return order;
-
+  return order;
 };
 
 /* ================= CREATE ORDER ================= */
 export const createOrder = async (req, res) => {
   try {
-
-     // ✅ ADD HERE
     if (req.body.items && req.body.items.length) {
       req.body.chairModel = req.body.items[0].name;
       req.body.quantity = req.body.items[0].quantity;
@@ -150,7 +223,7 @@ export const createOrder = async (req, res) => {
       module: "Order",
       entityType: "Order",
       entityId: order._id,
-      description: `Created order ${order.orderId}`,
+      description: `Created order ${order.orderId} → routed to ${order.progress}`,
     });
 
     res.status(201).json({
@@ -174,14 +247,12 @@ export const getOrders = async (req, res) => {
 
     const query = {};
 
-    // 🔐 ADD THIS BLOCK (does not break existing logic)
     if (req.user.role === "sales") {
       query.$or = [
         { createdBy: req.user.id },
         { salesPerson: req.user.id },
       ];
     }
-
 
     if (progress) query.progress = progress;
 
@@ -192,7 +263,6 @@ export const getOrders = async (req, res) => {
       ];
     }
 
-    /* RANGE SUPPORT */
     if (range) {
       const now = new Date();
       let start, end;
@@ -201,38 +271,30 @@ export const getOrders = async (req, res) => {
         start = new Date(now.setHours(0, 0, 0, 0));
         end = new Date(now.setHours(23, 59, 59, 999));
       }
-
       if (range === "yesterday") {
         const y = new Date();
         y.setDate(y.getDate() - 1);
         start = new Date(y.setHours(0, 0, 0, 0));
         end = new Date(y.setHours(23, 59, 59, 999));
       }
-
       if (range === "last7days") {
         start = new Date();
         start.setDate(start.getDate() - 6);
         start.setHours(0, 0, 0, 0);
         end = new Date();
       }
-
       if (range === "thisMonth") {
         start = new Date(now.getFullYear(), now.getMonth(), 1);
         end = new Date();
       }
-
       if (range === "lastMonth") {
         start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
         end = new Date(now.getFullYear(), now.getMonth(), 0);
       }
 
       if (start && end) {
-        query.orderDate = {
-          $gte: start,
-          $lte: end,
-        };
+        query.orderDate = { $gte: start, $lte: end };
       }
-
     }
 
     if (from && to) {
@@ -241,13 +303,14 @@ export const getOrders = async (req, res) => {
         $lte: new Date(to),
       };
     }
-const orders = await Order.find(query)
-  .populate("createdBy", "name")
-  .populate("salesPerson", "name")   // 👈 ADD THIS
-  .populate("dispatchedTo", "name")
-  .sort({ createdAt: -1 });
 
-orders.forEach(normalizeOrderItems);
+    const orders = await Order.find(query)
+      .populate("createdBy", "name")
+      .populate("salesPerson", "name")
+      .populate("dispatchedTo", "name")
+      .sort({ createdAt: -1 });
+
+    orders.forEach(normalizeOrderItems);
     res.json({ orders });
   } catch (err) {
     console.error("GET ORDERS ERROR:", err);
@@ -264,21 +327,12 @@ export const getOrderById = async (req, res) => {
       .populate("salesPerson", "name email");
 
     if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    res.status(200).json({
-      success: true,
-      order,
-    });
+    res.status(200).json({ success: true, order });
   } catch (error) {
-    res.status(400).json({
-      success: false,
-      message: "Invalid Order ID",
-    });
+    res.status(400).json({ success: false, message: "Invalid Order ID" });
   }
 };
 
@@ -288,43 +342,21 @@ export const updateOrder = async (req, res) => {
     const order = await Order.findById(req.params.id);
 
     if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    // ❌ Optional restriction (enable later)
-    // if (order.progress !== "ORDER_PLACED") { ... }
-
-    // ===============================
-    // 🔥 HANDLE ITEMS FIRST
-    // ===============================
     if (Array.isArray(req.body.items) && req.body.items.length > 0) {
       order.items = req.body.items.map((i) => ({
         name: String(i.name).trim(),
         quantity: Number(i.quantity),
       }));
-
-      // 🔒 BACKWARD COMPAT
       order.chairModel = order.items[0].name;
       order.quantity = order.items[0].quantity;
     }
 
-    // ===============================
-    // 🔁 OTHER FIELDS
-    // ===============================
-    if (req.body.remark !== undefined) {
-      order.remark = req.body.remark;
-    }
-
-    if (req.body.orderDate) {
-      order.orderDate = req.body.orderDate;
-    }
-
-    if (req.body.deliveryDate) {
-      order.deliveryDate = req.body.deliveryDate;
-    }
+    if (req.body.remark !== undefined) order.remark = req.body.remark;
+    if (req.body.orderDate) order.orderDate = req.body.orderDate;
+    if (req.body.deliveryDate) order.deliveryDate = req.body.deliveryDate;
 
     if (req.body.dispatchedTo) {
       if (mongoose.Types.ObjectId.isValid(req.body.dispatchedTo)) {
@@ -345,20 +377,13 @@ export const updateOrder = async (req, res) => {
       description: `Order ${order.orderId} updated (${order.items.length} items)`,
     });
 
-    res.status(200).json({
-      success: true,
-      message: "Order updated successfully",
-      order,
-    });
-
+    res.status(200).json({ success: true, message: "Order updated successfully", order });
   } catch (error) {
     console.error("UPDATE ORDER ERROR:", error);
-    res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    res.status(400).json({ success: false, message: error.message });
   }
 };
+
 /* ================= UPDATE ORDER PROGRESS ================= */
 export const updateOrderProgress = async (req, res) => {
   try {
@@ -368,45 +393,36 @@ export const updateOrderProgress = async (req, res) => {
     const allowed = [
       "ORDER_PLACED",
       "PRODUCTION_PENDING",
-  "PRODUCTION_IN_PROGRESS",
-  "PRODUCTION_COMPLETED",
+      "PRODUCTION_IN_PROGRESS",
+      "PRODUCTION_COMPLETED",
       "WAREHOUSE_COLLECTED",
       "FITTING_IN_PROGRESS",
       "FITTING_COMPLETED",
       "READY_FOR_DISPATCH",
       "DISPATCHED",
       "PARTIAL",
-      "PARTIALLY_DISPATCHED",  
+      "PARTIALLY_DISPATCHED",
     ];
 
     if (!allowed.includes(progress)) {
       return res.status(400).json({ message: "Invalid progress" });
     }
 
-    // SALES RULES
     if (role === "sales" && progress !== "DISPATCHED") {
-      return res.status(403).json({
-        message: "Sales can only dispatch orders",
-      });
+      return res.status(403).json({ message: "Sales can only dispatch orders" });
     }
 
-    // PRODUCTION RULES
     if (role === "production") {
       const allowedProduction = [
-  "PRODUCTION_PENDING",
-  "PRODUCTION_IN_PROGRESS",
-  "PRODUCTION_COMPLETED",
-];
-
-
+        "PRODUCTION_PENDING",
+        "PRODUCTION_IN_PROGRESS",
+        "PRODUCTION_COMPLETED",
+      ];
       if (!allowedProduction.includes(progress)) {
-        return res.status(403).json({
-          message: "Invalid production action",
-        });
+        return res.status(403).json({ message: "Invalid production action" });
       }
     }
 
-    // WAREHOUSE RULES
     if (role === "warehouse") {
       const allowedWarehouse = [
         "WAREHOUSE_COLLECTED",
@@ -416,44 +432,30 @@ export const updateOrderProgress = async (req, res) => {
         "DISPATCHED",
         "PARTIAL",
       ];
-
       if (!allowedWarehouse.includes(progress)) {
-        return res.status(403).json({
-          message: "Invalid warehouse action",
-        });
+        return res.status(403).json({ message: "Invalid warehouse action" });
       }
     }
 
-    // 🔥 FETCH ORDER FIRST
     const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
 
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
-
-    // 🚨 Production completion validation
     if (progress === "PRODUCTION_COMPLETED") {
       if (!order.productionWorker) {
-        return res.status(400).json({
-          message: "Assign production worker before completing",
-        });
+        return res.status(400).json({ message: "Assign production worker before completing" });
       }
-
       order.productionCompletedAt = new Date();
     }
 
     order.progress = progress;
     order.isPartial = progress === "PARTIAL";
-
     await order.save();
 
     res.status(200).json({ success: true, order });
-
   } catch (error) {
     res.status(500).json({ message: "Status update failed" });
   }
 };
-
 
 /* ================= DELETE ORDER ================= */
 export const deleteOrder = async (req, res) => {
@@ -461,11 +463,9 @@ export const deleteOrder = async (req, res) => {
     const deletedOrder = await Order.findByIdAndDelete(req.params.id);
 
     if (!deletedOrder) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
+
     await logActivity(req, {
       action: "ORDER_DELETE",
       module: "Order",
@@ -474,19 +474,15 @@ export const deleteOrder = async (req, res) => {
       description: `Deleted order ${deletedOrder.orderId}`,
     });
 
-    res.status(200).json({
-      success: true,
-      message: "Order deleted successfully",
-    });
+    res.status(200).json({ success: true, message: "Order deleted successfully" });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Failed to delete order",
-    });
+    res.status(500).json({ success: false, message: "Failed to delete order" });
   }
 };
 
 /* ================= GET ORDER BY ORDER ID ================= */
+/* ================= GET ORDER BY ORDER ID ================= */
+// FIXED: now returns `items` array so the Return modal can show all SKUs
 export const getOrderByOrderId = async (req, res) => {
   try {
     const order = await Order.findOne({ orderId: req.params.orderId })
@@ -494,18 +490,27 @@ export const getOrderByOrderId = async (req, res) => {
       .populate("salesPerson", "name")
       .populate("createdBy", "name");
 
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    // Normalize: ensure items array is always populated
+    // (legacy orders may only have chairModel + quantity)
+    const items =
+      order.items?.length
+        ? order.items
+        : order.chairModel
+        ? [{ name: order.chairModel, quantity: order.quantity, fittingStatus: "PENDING" }]
+        : [];
 
     res.status(200).json({
       success: true,
       order: {
-        orderId: order.orderId,
-        chairModel: order.chairModel,
-        quantity: order.quantity,
+        orderId:      order.orderId,
+        chairModel:   order.chairModel,
+        quantity:     order.quantity,
+        items,                          // ← THIS was missing
         dispatchedTo: order.dispatchedTo,
-        salesPerson: order.salesPerson,
+        salesPerson:  order.salesPerson,
+        progress:     order.progress,   // ← also send progress so modal can show warning
       },
     });
   } catch (error) {
@@ -513,16 +518,64 @@ export const getOrderByOrderId = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+/* ================= CHECK STOCK AVAILABILITY ================= */
+// POST /inventory/check-stock
+// Body: { items: [{ name: "2020 CHAIR BLACK (black)", quantity: 5 }] }
+export const checkStockAvailability = async (req, res) => {
+  try {
+    const { items } = req.body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: "items array required" });
+    }
+
+    const breakdown = [];
+    let allAvailable = true;
+
+    for (const item of items) {
+      // ✅ Strip "(colour)" suffix before querying
+      const baseChairType = stripColourSuffix(item.name);
+      const colour = extractColour(item.name);
+
+      const inventoryQuery = {
+        type: "FULL",
+        chairType: { $regex: new RegExp(`^${baseChairType}$`, "i") },
+        quantity: { $gt: 0 },
+      };
+
+      if (colour) {
+        inventoryQuery.colour = { $regex: new RegExp(`^${colour}$`, "i") };
+      }
+
+      const records = await Inventory.find(inventoryQuery);
+      const available = records.reduce((s, r) => s + r.quantity, 0);
+      const sufficient = available >= item.quantity;
+
+      if (!sufficient) allAvailable = false;
+
+      breakdown.push({
+        name: item.name,
+        requested: item.quantity,
+        available,
+        sufficient,
+      });
+    }
+
+    res.json({ allAvailable, breakdown });
+  } catch (err) {
+    console.error("CHECK STOCK ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
 export const staffPerformanceAnalytics = async (req, res) => {
   try {
     const { from, to } = req.query;
     const match = {};
 
     if (from && to) {
-      match.orderDate = {
-        $gte: new Date(from),
-        $lte: new Date(to),
-      };
+      match.orderDate = { $gte: new Date(from), $lte: new Date(to) };
     }
 
     const data = await Order.aggregate([
@@ -530,7 +583,7 @@ export const staffPerformanceAnalytics = async (req, res) => {
       {
         $group: {
           _id: { $ifNull: ["$salesPerson", "$createdBy"] },
-          orders: { $sum: 1 }, // ← count orders, not chairs
+          orders: { $sum: 1 },
         },
       },
       {
@@ -544,12 +597,11 @@ export const staffPerformanceAnalytics = async (req, res) => {
       { $unwind: "$user" },
       {
         $project: {
-          _id: "$user._id",   // ✅ ADD THIS
+          _id: "$user._id",
           name: "$user.name",
           role: "$user.role",
           orders: 1,
-        }
-
+        },
       },
       { $sort: { orders: -1 } },
     ]);
@@ -559,22 +611,19 @@ export const staffPerformanceAnalytics = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
-// GET /orders/analytics/products
+
 export const productAnalytics = async (req, res) => {
   try {
     const { from, to } = req.query;
     const match = {};
 
     if (from && to) {
-      match.orderDate = {
-        $gte: new Date(from),
-        $lte: new Date(to),
-      };
+      match.orderDate = { $gte: new Date(from), $lte: new Date(to) };
     }
 
     const data = await Order.aggregate([
       { $match: match },
-      { $group: { _id: "$chairModel", orders: { $sum: 1 } } }, // count orders
+      { $group: { _id: "$chairModel", orders: { $sum: 1 } } },
       { $project: { name: "$_id", orders: 1, _id: 0 } },
       { $sort: { orders: -1 } },
     ]);
@@ -584,13 +633,12 @@ export const productAnalytics = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
 const normalizeHeader = (str = "") =>
   str.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 const normalizeRow = (row) => {
   const normalized = {};
-
-  // Convert Excel headers to normalized form
   const normalizedKeys = Object.keys(row).map((key) => ({
     original: key,
     clean: normalizeHeader(key),
@@ -600,11 +648,7 @@ const normalizeRow = (row) => {
   for (const targetField in COLUMN_MAP) {
     for (const alias of COLUMN_MAP[targetField]) {
       const cleanAlias = normalizeHeader(alias);
-
-      const match = normalizedKeys.find((k) =>
-        k.clean.includes(cleanAlias)
-      );
-
+      const match = normalizedKeys.find((k) => k.clean.includes(cleanAlias));
       if (match) {
         normalized[targetField] = match.value;
         break;
@@ -617,23 +661,14 @@ const normalizeRow = (row) => {
 
 const normalizeDate = (value) => {
   if (!value) return null;
-
-  // Excel serial number (corrected)
   if (typeof value === "number") {
     const excelEpoch = new Date(Date.UTC(1899, 11, 30));
     return new Date(excelEpoch.getTime() + value * 86400000);
   }
-
-  // Already Date object
-  if (value instanceof Date) {
-    return value;
-  }
-
-  // String date
+  if (value instanceof Date) return value;
   const parsed = new Date(value);
   return isNaN(parsed.getTime()) ? null : parsed;
 };
-
 
 export const uploadOrders = async (req, res) => {
   try {
@@ -647,401 +682,237 @@ export const uploadOrders = async (req, res) => {
 
     for (const file of req.files) {
       let rows = [];
-
       const ext = file.originalname.split(".").pop().toLowerCase();
 
-      // -------- CSV --------
       if (ext === "csv") {
         const csvString = file.buffer.toString("utf-8");
         rows = await csv().fromString(csvString);
-      }
-
-      // -------- EXCEL --------
-      else if (ext === "xlsx" || ext === "xls") {
+      } else if (ext === "xlsx" || ext === "xls") {
         const workbook = XLSX.read(file.buffer, { type: "buffer" });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
         rows = XLSX.utils.sheet_to_json(sheet);
-      }
-
-      // -------- Unsupported --------
-      else {
+      } else {
         continue;
       }
 
       for (const rawRow of rows) {
-  if (!Object.keys(rawRow).length) continue;
+        if (!Object.keys(rawRow).length) continue;
+        total++;
 
-  total++;
+        try {
+          const row = normalizeRow(rawRow);
+          row.quantity = Number(String(row.quantity).replace(/[^0-9.]/g, ""));
+          row.orderType =
+            String(row.orderType || "").trim().toUpperCase() === "SPARE"
+              ? "SPARE"
+              : "FULL";
+          row.orderDate = normalizeDate(row.orderDate);
+          row.deliveryDate = normalizeDate(row.deliveryDate);
+          if (row.dispatchedTo) row.dispatchedTo = String(row.dispatchedTo).trim();
+          if (row.chairModel) row.chairModel = String(row.chairModel).trim();
 
-  try {
-    const row = normalizeRow(rawRow);
+          const order = await createOrderInternal({ row, user: req.user });
 
-    // ✅ REQUIRED FIXES
-    row.quantity = Number(
-      String(row.quantity).replace(/[^0-9.]/g, "")
-    );
+          await logActivity(req, {
+            action: "CREATE_ORDER_BULK",
+            module: "Order",
+            entityType: "Order",
+            entityId: order._id,
+            description: `Bulk order created (${order.orderId})`,
+          });
 
-    row.orderType =
-      String(row.orderType || "")
-        .trim()
-        .toUpperCase() === "SPARE"
-        ? "SPARE"
-        : "FULL";
-
-    row.orderDate = normalizeDate(row.orderDate);
-    row.deliveryDate = normalizeDate(row.deliveryDate);
-
-    if (row.dispatchedTo) row.dispatchedTo = String(row.dispatchedTo).trim();
-    if (row.chairModel) row.chairModel = String(row.chairModel).trim();
-
-    const order = await createOrderInternal({
-      row,
-      user: req.user,
-    });
-
-    await logActivity(req, {
-      action: "CREATE_ORDER_BULK",
-      module: "Order",
-      entityType: "Order",
-      entityId: order._id,
-      description: `Bulk order created (${order.orderId})`,
-    });
-
-    created++;
-  } catch (err) {
-    errors.push({
-      row: total,
-      message: err.message,
-    });
-  }
-}
-
+          created++;
+        } catch (err) {
+          errors.push({ row: total, message: err.message });
+        }
+      }
     }
 
-    res.status(200).json({
-      success: true,
-      total,
-      created,
-      failed: errors.length,
-      errors,
-    });
+    res.status(200).json({ success: true, total, created, failed: errors.length, errors });
   } catch (err) {
-    res.status(500).json({
-      message: "Bulk upload failed",
-    });
+    res.status(500).json({ message: "Bulk upload failed" });
   }
 };
-
 
 export const assignProductionWorker = async (req, res) => {
   try {
     const { workerName } = req.body;
+    if (!workerName) return res.status(400).json({ message: "Worker name is required" });
 
-    if (!workerName) {
-      return res.status(400).json({
-        message: "Worker name is required",
-      });
-    }
-
-    // 🔥 FETCH ORDER FIRST
     const order = await Order.findById(req.params.id);
-
-    if (!order) {
-      return res.status(404).json({
-        message: "Order not found",
-      });
-    }
+    if (!order) return res.status(404).json({ message: "Order not found" });
 
     if (order.progress !== "PRODUCTION_PENDING") {
-      return res.status(400).json({
-        message: "Order is not in production stage",
-      });
+      return res.status(400).json({ message: "Order is not in production stage" });
     }
-
-    // ✅ Now safe to check this
     if (order.productionWorker) {
-      return res.status(400).json({
-        message: "Worker already assigned",
-      });
+      return res.status(400).json({ message: "Worker already assigned" });
     }
 
     order.productionWorker = workerName;
     order.productionAssignedAt = new Date();
-
     await order.save();
 
-    res.status(200).json({
-      success: true,
-      message: "Worker assigned successfully",
-      order,
-    });
-
+    res.status(200).json({ success: true, message: "Worker assigned successfully", order });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
-import Inventory from "../models/inventory.model.js"; // make sure this exists
+export const assignProductionWorkersPerItem = async (req, res) => {
+  try {
+    const { assignments } = req.body;
 
-// export const acceptProductionOrder = async (req, res) => {
-//   try {
-//     const { parts } = req.body;
+    if (!Array.isArray(assignments) || assignments.length === 0) {
+      return res.status(400).json({ message: "Product-wise assignments required" });
+    }
 
-//     const order = await Order.findById(req.params.id);
-//     if (!order) {
-//       return res.status(404).json({ message: "Order not found" });
-//     }
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
 
-//     if (!order.productionWorker) {
-//       return res.status(400).json({
-//         message: "Assign worker before accepting",
-//       });
-//     }
+    if (order.progress !== "PRODUCTION_PENDING") {
+      return res.status(400).json({ message: "Order not in production pending stage" });
+    }
 
-//     if (
-//       order.progress !== "PRODUCTION_PENDING" &&
-//       order.progress !== "PRODUCTION_IN_PROGRESS"
-//     ) {
-//       return res.status(400).json({
-//         message: "Order not in production stage",
-//       });
-//     }
+    for (const a of assignments) {
+      if (!a.product || !a.worker || !a.quantity) {
+        return res.status(400).json({ message: "Product, quantity and worker are required" });
+      }
+      const item = order.items.find(
+        (i) => i.name.trim().toLowerCase() === String(a.product).trim().toLowerCase()
+      );
+      if (!item) return res.status(400).json({ message: `Invalid product: ${a.product}` });
+      if (Number(a.quantity) !== Number(item.quantity)) {
+        return res.status(400).json({
+          message: `Quantity mismatch for ${a.product}. Required ${item.quantity}`,
+        });
+      }
+    }
 
-//     if (!parts || Object.keys(parts).length === 0) {
-//       return res.status(400).json({
-//         message: "No parts selected",
-//       });
-//     }
+    order.productionAssignments = assignments.map((a) => ({
+      product: a.product,
+      quantity: Number(a.quantity),
+      worker: a.worker,
+      assignedAt: new Date(),
+    }));
+    order.productionWorker = assignments[0].worker;
+    order.productionAssignedAt = new Date();
 
-//     const inventory = await Inventory.find({
-//   type: "SPARE",
-//   location: { $regex: "^PROD_" },
-// });
-// if (!inventory.length) {
-//   return res.status(400).json({
-//     message: "No production inventory available",
-//   });
-// }
+    await order.save();
 
+    await logActivity(req, {
+      action: "PRODUCTION_ASSIGN_PRODUCT_WORKER",
+      module: "Order",
+      entityType: "Order",
+      entityId: order._id,
+      description: `Assigned workers per product for order ${order.orderId}`,
+    });
 
-//     // 🔥 VALIDATE + DEDUCT
-//     for (const partName in parts) {
-//       const qtyToUse = Number(parts[partName] || 0);
-//       if (qtyToUse <= 0) continue;
-
-//       const items = inventory.filter(i => {
-//   if (!i.partName || typeof i.partName !== "string") return false;
-
-//   return (
-//     i.type === "SPARE" &&
-//     i.partName.trim().toLowerCase() ===
-//       String(partName).trim().toLowerCase()
-//   );
-// });
-
-
-//       const totalAvailable = items.reduce(
-//         (sum, i) => sum + i.quantity,
-//         0
-//       );
-
-//       if (qtyToUse > totalAvailable) {
-//         return res.status(400).json({
-//           message: `Not enough ${partName}`,
-//         });
-//       }
-
-//       // 🔥 Deduct from inventory documents
-//       let remaining = qtyToUse;
-
-//       for (const item of items) {
-//         if (remaining <= 0) break;
-
-//         const deduct = Math.min(item.quantity, remaining);
-//         item.quantity -= deduct;
-//         remaining -= deduct;
-
-//         await item.save();
-//       }
-//     }
-
-//     order.progress = "PRODUCTION_IN_PROGRESS";
-//     await order.save();
-
-//     res.status(200).json({
-//       success: true,
-//       message: "Production materials issued successfully",
-//     });
-
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ message: err.message });
-
-//   }
-// };
-
+    res.status(200).json({ success: true, message: "Workers assigned per product successfully", order });
+  } catch (err) {
+    console.error("ASSIGN PRODUCT WORKER ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
 
 export const acceptProductionOrder = async (req, res) => {
   try {
     const { parts } = req.body;
 
     if (!parts || typeof parts !== "object" || Object.keys(parts).length === 0) {
-      return res.status(400).json({
-        message: "No parts selected",
-      });
+      return res.status(400).json({ message: "No parts selected" });
     }
 
     const order = await Order.findById(req.params.id);
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    if (!["PRODUCTION_PENDING", "PRODUCTION_IN_PROGRESS"].includes(order.progress)) {
+      return res.status(400).json({ message: "Order not in production stage" });
     }
 
-    if (!order.productionWorker) {
-      return res.status(400).json({
-        message: "Assign worker before accepting",
-      });
-    }
-
-    if (
-      order.progress !== "PRODUCTION_PENDING" &&
-      order.progress !== "PRODUCTION_IN_PROGRESS"
-    ) {
-      return res.status(400).json({
-        message: "Order not in production stage",
-      });
-    }
-
-    // ===============================
-    // 🔥 FIXED PRODUCTION VALIDATION
-    // ===============================
-
-    const existingParts = order.productionParts || {};
-
-    // Merge existing + new parts first (WITHOUT saving yet)
-    const mergedParts = { ...existingParts };
-
-    for (const partName in parts) {
-      const qtyToAdd = Number(parts[partName] || 0);
-      if (qtyToAdd <= 0) continue;
-
-      mergedParts[partName] =
-        (mergedParts[partName] || 0) + qtyToAdd;
-    }
-
-    const quantities = Object.values(mergedParts);
-
-    if (!quantities.length) {
-      return res.status(400).json({
-        message: "No valid parts provided",
-      });
-    }
-
-    // 🔥 Chairs buildable = minimum part quantity
-    const buildableQty = Math.min(...quantities);
-
-    if (buildableQty > order.quantity) {
-      return res.status(400).json({
-        message: `Production exceeds order quantity. Order requires ${order.quantity}`,
-      });
-    }
-
-    // ===============================
-    // 🔥 INVENTORY VALIDATION
-    // ===============================
-
+    // ✅ Only fetch PRODUCTION locationType inventory
     const inventory = await Inventory.find({
       type: "SPARE",
-      location: { $regex: "^PROD_" },
+      locationType: "PRODUCTION",
     });
 
-    if (!inventory.length) {
-      return res.status(400).json({
-        message: "No production inventory available",
-      });
-    }
+    console.log("[acceptProductionOrder] Production inventory records:", inventory.length);
+    console.log("[acceptProductionOrder] Parts to deduct:", parts);
 
-    for (const partName in parts) {
-      const qtyToUse = Number(parts[partName] || 0);
-      if (qtyToUse <= 0) continue;
+    // ✅ Validate ALL parts have enough stock BEFORE deducting anything
+    for (const [partName, qtyToUse] of Object.entries(parts)) {
+      const qty = Number(qtyToUse || 0);
+      if (qty <= 0) continue;
 
-      const items = inventory.filter((i) => {
-        if (!i.partName || typeof i.partName !== "string") return false;
-
-        return (
-          i.type === "SPARE" &&
-          i.partName.trim().toLowerCase() ===
-            String(partName).trim().toLowerCase()
-        );
-      });
-
-      const totalAvailable = items.reduce(
-        (sum, i) => sum + i.quantity,
-        0
+      const matchingItems = inventory.filter(
+        (i) => i.partName?.trim().toLowerCase() === partName.trim().toLowerCase()
       );
 
-      if (qtyToUse > totalAvailable) {
+      const totalAvailable = matchingItems.reduce((sum, i) => sum + i.quantity, 0);
+      console.log(`[Validate] "${partName}": need ${qty}, have ${totalAvailable}`);
+
+      if (totalAvailable < qty) {
         return res.status(400).json({
-          message: `Not enough ${partName} in production inventory`,
+          message: `Not enough "${partName}" in production inventory. Available: ${totalAvailable}, Required: ${qty}`,
         });
       }
+    }
 
-      let remaining = qtyToUse;
+    // ✅ All validated — now deduct
+    for (const [partName, qtyToUse] of Object.entries(parts)) {
+      const qty = Number(qtyToUse || 0);
+      if (qty <= 0) continue;
 
-      for (const item of items) {
+      const matchingItems = inventory
+        .filter((i) => i.partName?.trim().toLowerCase() === partName.trim().toLowerCase())
+        .sort((a, b) => b.quantity - a.quantity); // deduct from largest first
+
+      let remaining = qty;
+      for (const item of matchingItems) {
         if (remaining <= 0) break;
-
         const deduct = Math.min(item.quantity, remaining);
         remaining -= deduct;
 
-        await Inventory.updateOne(
+        const result = await Inventory.updateOne(
           { _id: item._id, quantity: { $gte: deduct } },
           { $inc: { quantity: -deduct } }
         );
+        console.log(`[Deduct] ${partName} — deducted ${deduct} from ${item._id}, modified: ${result.modifiedCount}`);
       }
     }
 
-    // ===============================
-    // 🔥 SAVE MERGED PARTS
-    // ===============================
+    // ✅ Merge parts into order record
+    const mergedParts = { ...(order.productionParts || {}) };
+    for (const [partName, qty] of Object.entries(parts)) {
+      const key = partName.trim().toLowerCase();
+      mergedParts[key] = (mergedParts[key] || 0) + Number(qty);
+    }
 
     order.productionParts = mergedParts;
-
     order.progress = "PRODUCTION_IN_PROGRESS";
-
     await order.save();
 
     res.status(200).json({
       success: true,
-      message: "Production materials issued successfully",
+      message: "Production materials issued and inventory deducted successfully",
       order,
     });
-
   } catch (err) {
     console.error("ACCEPT PRODUCTION ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };
 
-
-
 export const preDispatchEdit = async (req, res) => {
   try {
     const { dispatchedTo, orderDate, deliveryDate, remark } = req.body;
+    const order = await Order.findById(req.params.id).populate("dispatchedTo", "name");
 
-    const order = await Order.findById(req.params.id)
-      .populate("dispatchedTo", "name");
-
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
-
+    if (!order) return res.status(404).json({ message: "Order not found" });
     if (order.progress !== "READY_FOR_DISPATCH") {
-      return res.status(400).json({
-        message: "Only orders ready for dispatch can be amended",
-      });
+      return res.status(400).json({ message: "Only orders ready for dispatch can be amended" });
     }
 
-    // ✅ CAPTURE OLD VALUES FIRST
     const oldValues = {
       dispatchedTo: order.dispatchedTo?.name,
       orderDate: order.orderDate,
@@ -1049,11 +920,7 @@ export const preDispatchEdit = async (req, res) => {
       remark: order.remark,
     };
 
-    // ✅ APPLY UPDATES
-    if (remark !== undefined) {
-      order.remark = remark;
-    }
-
+    if (remark !== undefined) order.remark = remark;
     if (dispatchedTo) {
       if (mongoose.Types.ObjectId.isValid(dispatchedTo)) {
         order.dispatchedTo = dispatchedTo;
@@ -1062,82 +929,137 @@ export const preDispatchEdit = async (req, res) => {
         order.dispatchedTo = vendor._id;
       }
     }
-
     if (orderDate) order.orderDate = orderDate;
     if (deliveryDate) order.deliveryDate = deliveryDate;
-
     order.lastAmendedAt = new Date();
     order.amendedBy = req.user.id;
 
     await order.save();
 
-    // ✅ FIXED LOG
     await logActivity(req, {
       action: "ORDER_AMENDED_PRE_DISPATCH",
       module: "Order",
       entityType: "Order",
       entityId: order._id,
       description: `Order ${order.orderId} amended before dispatch`,
-      meta: {
-        before: oldValues,
-        after: { dispatchedTo, orderDate, deliveryDate, remark },
-      },
+      meta: { before: oldValues, after: { dispatchedTo, orderDate, deliveryDate, remark } },
     });
 
-    res.json({
-      success: true,
-      message: "Order updated before dispatch",
-      order,
-    });
+    res.json({ success: true, message: "Order updated before dispatch", order });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Pre-dispatch edit failed" });
   }
 };
+
 export const partialDispatch = async (req, res) => {
   try {
-    const { quantity, notes } = req.body;
+    const { itemQuantities, notes } = req.body;
 
-    if (!quantity || Number(quantity) <= 0) {
-      return res.status(400).json({ message: "Valid quantity required" });
+    if (!itemQuantities || typeof itemQuantities !== "object" || !Object.keys(itemQuantities).length) {
+      return res.status(400).json({ message: "itemQuantities required" });
     }
+
+    const totalNow = Object.values(itemQuantities).reduce((s, q) => s + Number(q || 0), 0);
+    if (totalNow <= 0) return res.status(400).json({ message: "Enter valid quantities" });
 
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    if (order.progress !== "READY_FOR_DISPATCH" && order.progress !== "PARTIALLY_DISPATCHED") {
-      return res.status(400).json({ message: "Order is not ready for dispatch" });
+    const dispatchableStatuses = [
+  "READY_FOR_DISPATCH",
+  "PARTIALLY_DISPATCHED",
+  "FITTING_IN_PROGRESS",   // ← allow partial SKU dispatch mid-fitting
+  "FITTING_COMPLETED", 
+   "WAREHOUSE_COLLECTED",    // ← allow dispatch after all fitting done
+];
+
+if (!dispatchableStatuses.includes(order.progress)) {
+  return res.status(400).json({ message: "Order is not ready for dispatch" });
+}
+
+    const orderItems = order.items?.length
+      ? order.items
+      : [{ name: order.chairModel, quantity: order.quantity }];
+
+    const totalOrderQty = orderItems.reduce((s, i) => s + i.quantity, 0);
+    const alreadyDispatched = order.dispatchedQuantity || 0;
+
+    for (const [itemName, qty] of Object.entries(itemQuantities)) {
+      const qtyNum = Number(qty);
+      if (qtyNum <= 0) continue;
+
+      const orderItem = orderItems.find(
+        (i) => i.name.toLowerCase().trim() === itemName.toLowerCase().trim()
+      );
+      if (!orderItem) return res.status(400).json({ message: `Item not found: ${itemName}` });
+
+      let alreadyForItem = 0;
+      order.dispatches?.forEach((d) => {
+        alreadyForItem += Number(d.itemQuantities?.[itemName] || 0);
+      });
+
+      const remainingForItem = orderItem.quantity - alreadyForItem;
+      if (qtyNum > remainingForItem) {
+        return res.status(400).json({
+          message: `${itemName}: Cannot dispatch ${qtyNum}, only ${remainingForItem} remaining`,
+        });
+      }
     }
 
-    const totalOrderQty = order.items?.length
-      ? order.items.reduce((s, i) => s + i.quantity, 0)
-      : order.quantity;
+    // FULL order: deduct inventory per item (strip colour suffix for lookup)
+    const shouldDeductInventory =
+  order.orderType === "FULL" && order.warehouseDirect === true;
 
-    const alreadyDispatched = order.dispatchedQuantity || 0;
-    const remaining = totalOrderQty - alreadyDispatched;
+if (shouldDeductInventory) {
+  for (const [itemName, qty] of Object.entries(itemQuantities)) {
+    const qtyNum = Number(qty);
+    if (qtyNum <= 0) continue;
 
-    if (Number(quantity) > remaining) {
+    const baseChairType = stripColourSuffix(itemName);
+    const colour = extractColour(itemName);
+
+    const inventoryQuery = {
+      type: "FULL",
+      chairType: { $regex: new RegExp(`^${baseChairType}$`, "i") },
+      quantity: { $gt: 0 },
+    };
+
+    if (colour) {
+      inventoryQuery.colour = { $regex: new RegExp(`^${colour}$`, "i") };
+    }
+
+    const records = await Inventory.find(inventoryQuery).sort({ quantity: -1 });
+    const available = records.reduce((s, r) => s + r.quantity, 0);
+
+    if (available < qtyNum) {
       return res.status(400).json({
-        message: `Cannot dispatch ${quantity}. Only ${remaining} remaining.`,
+        message: `Insufficient stock for ${itemName}. Available: ${available}, Required: ${qtyNum}`,
       });
     }
 
-    // Record this dispatch batch
+    let remaining = qtyNum;
+    for (const record of records) {
+      if (remaining <= 0) break;
+      const deduct = Math.min(record.quantity, remaining);
+      remaining -= deduct;
+      await Inventory.updateOne(
+        { _id: record._id },
+        { $inc: { quantity: -deduct } }
+      );
+    }
+  }
+}
     order.dispatches.push({
-      quantity: Number(quantity),
+      quantity: totalNow,
+      itemQuantities,
       notes: notes || "",
       dispatchedBy: req.user.id,
       date: new Date(),
     });
 
-    order.dispatchedQuantity = alreadyDispatched + Number(quantity);
-
-    // If fully dispatched now
-    if (order.dispatchedQuantity >= totalOrderQty) {
-      order.progress = "DISPATCHED";
-    } else {
-      order.progress = "PARTIALLY_DISPATCHED";
-    }
+    order.dispatchedQuantity = alreadyDispatched + totalNow;
+    order.progress = order.dispatchedQuantity >= totalOrderQty ? "DISPATCHED" : "PARTIALLY_DISPATCHED";
 
     await order.save();
 
@@ -1146,12 +1068,12 @@ export const partialDispatch = async (req, res) => {
       module: "Order",
       entityType: "Order",
       entityId: order._id,
-      description: `Dispatched ${quantity} of ${totalOrderQty} for order ${order.orderId}`,
+      description: `Dispatched ${totalNow} units for order ${order.orderId}`,
     });
 
     res.json({
       success: true,
-      message: `Dispatched ${quantity}. ${order.dispatchedQuantity >= totalOrderQty ? "Order fully dispatched." : `${totalOrderQty - order.dispatchedQuantity} remaining.`}`,
+      message: `Dispatched ${totalNow} units. ${order.progress === "DISPATCHED" ? "Order fully complete." : `${totalOrderQty - order.dispatchedQuantity} remaining.`}`,
       order,
     });
   } catch (err) {
@@ -1160,4 +1082,50 @@ export const partialDispatch = async (req, res) => {
   }
 };
 
+export const updateItemFitting = async (req, res) => {
+  try {
+    const { itemIndex, fittingStatus } = req.body;
 
+    if (!["PENDING", "IN_PROGRESS", "COMPLETED"].includes(fittingStatus)) {
+      return res.status(400).json({ message: "Invalid fitting status" });
+    }
+
+    const updatePath = `items.${itemIndex}.fittingStatus`;
+    const order = await Order.findByIdAndUpdate(
+      req.params.id,
+      { $set: { [updatePath]: fittingStatus } },
+      { new: true }
+    );
+
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const anyCompleted = order.items.some(
+  (i) => i.fittingStatus === "COMPLETED"
+);
+
+const allCompleted = order.items.every(
+  (i) => i.fittingStatus === "COMPLETED"
+);
+
+
+
+let newProgress = order.progress;
+
+if (allCompleted) {
+  newProgress = "FITTING_COMPLETED";
+} else {
+  // stay in fitting no matter what
+  newProgress = "FITTING_IN_PROGRESS";
+}
+
+    if (newProgress !== order.progress) {
+      await Order.findByIdAndUpdate(req.params.id, { $set: { progress: newProgress } });
+    }
+
+    const updatedOrder = await Order.findById(req.params.id);
+    res.json({ success: true, order: updatedOrder });
+  } catch (err) {
+    console.error("UPDATE ITEM FITTING ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};

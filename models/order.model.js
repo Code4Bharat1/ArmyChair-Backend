@@ -20,14 +20,13 @@ dispatchedQuantity: {
   default: 0,
 },
 
-dispatches: [
-  {
-    quantity: { type: Number, required: true },
-    date: { type: Date, default: Date.now },
-    notes: { type: String },
-    dispatchedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  },
-],
+dispatches: [{
+  quantity: Number,
+  itemQuantities: { type: Map, of: Number },  // ← ADD THIS
+  notes: String,
+  dispatchedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  date: { type: Date, default: Date.now },
+}],
 
     chairModel: {
       type: String,
@@ -58,19 +57,16 @@ dispatches: [
 items: {
   type: [
     {
-      name: {
+      name: { type: String, required: true, trim: true },
+      quantity: { type: Number, required: true, min: 1 },
+      fittingStatus: {
         type: String,
-        required: true,
-        trim: true,
-      },
-      quantity: {
-        type: Number,
-        required: true,
-        min: 1,
+        enum: ["PENDING", "IN_PROGRESS", "COMPLETED"],
+        default: "PENDING",
       },
     },
   ],
-  default: undefined, // 👈 VERY IMPORTANT (explained below)
+  default: undefined,
 },
     lastAmendedAt: Date,
     amendedBy: {
@@ -99,7 +95,14 @@ items: {
     "PARTIALLY_DISPATCHED",  // ← ADD THIS
   ],
 },
-
+productionAssignments: [
+  {
+    product: { type: String, required: true },   // item.name
+    quantity: { type: Number, required: true },
+    worker: { type: String, required: true },
+    assignedAt: { type: Date, default: Date.now }
+  }
+],
 
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

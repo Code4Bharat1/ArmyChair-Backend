@@ -3,6 +3,7 @@ import {
   createReturn,
   getAllReturns,
   moveReturnToFitting,
+  moveReturnToInventory,
 } from "../controllers/return.controller.js";
 import { fittingDecision } from "../controllers/return.controller.js";
 import { protect, returnAccess } from "../middlewares/auth.middleware.js";
@@ -18,6 +19,7 @@ router.post("/:id/fitting-decision", fittingDecision);
 router.post("/", createReturn);
 router.get("/", getAllReturns);
 router.post("/:id/move-to-fitting", moveReturnToFitting);
+router.post("/:id/move-to-inventory", protect, moveReturnToInventory);
 
 
 export default router;

@@ -38,31 +38,33 @@ const inventorySchema = new mongoose.Schema(
       required: true,
     },
     colour: {
-  type: String,
-  trim: true,
-},
-remark: {
-  type: String,
-  trim: true,
-  default: "",
-},
+      type: String,
+      trim: true,
+    },
+    remark: {
+      type: String,
+      trim: true,
+      default: "",
+    },
 
-mesh: {
+    mesh: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    chalanNo: {
   type: String,
-  trim: true,
-  default: "",
+  default: "",      // ✅ just a default
 },
-vendor: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "Vendor",
-  default: null,
-  },
+    vendor: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Vendor",
+      default: null,
+    },
 
     minQuantity: {
       type: Number,
-      required: function () {
-        return this.type === "FULL";
-      },
+      default: 0, // ✅ allow SPARE also
     },
     maxQuantity: {
       type: Number,
@@ -78,7 +80,7 @@ vendor: {
 
 // FULL chairs: unique per chairType + location
 inventorySchema.index(
-  { chairType: 1, colour: 1, location: 1 },
+  { chairType: 1, colour: 1, location: 1, vendor: 1 },
   {
     unique: true,
     partialFilterExpression: { type: "FULL" },
@@ -93,9 +95,9 @@ inventorySchema.index(
     partialFilterExpression: { type: "SPARE" },
   }
 );
+// This stays as-is in your schema — it covers direct .save() calls
 inventorySchema.pre("validate", function () {
   const loc = this.location?.trim().toUpperCase() || "";
-
   if (loc.startsWith("PROD_")) {
     this.locationType = "PRODUCTION";
   } else if (loc.startsWith("FIT_")) {
@@ -104,6 +106,5 @@ inventorySchema.pre("validate", function () {
     this.locationType = "WAREHOUSE";
   }
 });
-
 
 export default mongoose.model("Inventory", inventorySchema);
