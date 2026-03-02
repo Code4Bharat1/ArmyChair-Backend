@@ -115,10 +115,10 @@ export const getOrderPickData = async (req, res) => {
 
     // ✅ FETCH ONLY WAREHOUSE STOCK (case-insensitive safe)
     const spareStock = await Inventory.find({
-      type: "SPARE",
-      locationType: "WAREHOUSE",
-      quantity: { $gt: 0 },
-    });
+  type: "SPARE",
+  locationType: { $in: ["WAREHOUSE", "PRODUCTION"] },
+  quantity: { $gt: 0 },
+});
 
     /**
      * Group by NORMALIZED part name
