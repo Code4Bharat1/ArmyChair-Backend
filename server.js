@@ -69,7 +69,7 @@ app.use("/api/tasks", taskRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/production", productionRoutes);
 app.use("/api/work", workTimeRoutes);
-app.use("/activity", activityRoutes);
+app.use("/api/activity", activityRoutes);
 app.use("/api/activity", activityExportRoutes);
 app.use("/api/notifications", notificationRoutes);
 

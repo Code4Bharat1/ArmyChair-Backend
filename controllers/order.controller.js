@@ -518,10 +518,6 @@ export const getOrderByOrderId = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
-/* ================= CHECK STOCK AVAILABILITY ================= */
-// POST /inventory/check-stock
-// Body: { items: [{ name: "2020 CHAIR BLACK (black)", quantity: 5 }] }
 export const checkStockAvailability = async (req, res) => {
   try {
     const { items } = req.body;
