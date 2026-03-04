@@ -52,6 +52,7 @@ export const createReturn = async (req, res) => {
     const returnDoc = await Return.create({
       orderId:      order.orderId,
       chairType:    chairTypeLabel,
+      orderType: order.orderType,
       items:        items.map((i) => ({
         name:          i.name,
         quantity:      i.quantity,
@@ -89,6 +90,7 @@ export const getAllReturns = async (req, res) => {
       _id:              r._id,
       orderId:          r.orderId,
       chairType:        r.chairType,
+       orderType:        r.orderType,
       items:            r.items || [],
       quantity:         r.quantity,
       returnedFrom:     r.returnedFrom,
@@ -139,32 +141,71 @@ export const moveReturnToInventory = async (req, res) => {
     }
 
     for (const item of goodItems) {
-      await Inventory.findOneAndUpdate(
-        { chairType: item.name, colour: "Returned", location: "WAREHOUSE", type: "FULL" },
-        {
-          $inc: { quantity: item.quantity },
-          $setOnInsert: {
-            chairType:     item.name,
-            colour:        "Returned",
-            location:      "WAREHOUSE",
-            type:          "FULL",
-            minQuantity:   0,
-            maxQuantity:   0,
-            remark:        `Returned from ${returnItem.returnedFrom || "Unknown"}`,
-            createdBy:     req.user?.id,
-            createdByRole: req.user?.role,
-          },
-        },
-        { new: true, upsert: true }
-      );
-    }
+  const rawName = item.name.trim();
 
+  // ✅ Try exact match first
+  let existingStock = await Inventory.findOne({
+    chairType: { $regex: `^${rawName}$`, $options: "i" },
+    type: "FULL",
+    locationType: "WAREHOUSE",
+  }).sort({ quantity: -1 });
+
+  // ✅ If no exact match, try stripping colour from name
+  if (!existingStock) {
+    const colourMatch = rawName.match(/\(([^)]+)\)\s*$/);
+    if (colourMatch) {
+      const baseName = rawName.replace(/\s*\([^)]+\)\s*$/, "").trim();
+      const colour = colourMatch[1].trim();
+
+      // Debug log — remove after testing
+      const allMatches = await Inventory.find({
+        type: "FULL",
+        locationType: "WAREHOUSE",
+        chairType: { $regex: baseName, $options: "i" },
+      }).lean();
+      console.log("DEBUG matches for", rawName, ":", JSON.stringify(
+        allMatches.map(m => ({ chairType: m.chairType, colour: m.colour, qty: m.quantity }))
+      ));
+
+     existingStock = await Inventory.findOne({
+  chairType: { $regex: `^${baseName}$`, $options: "i" },
+  colour:    { $regex: `^${colour}$`, $options: "i" },
+  type: "FULL",
+  $or: [
+    { locationType: "WAREHOUSE" },
+    { locationType: { $exists: false } },  // ✅ catches old records without locationType
+    { location: "WAREHOUSE" },
+  ],
+}).sort({ quantity: -1 });
+    }
+  }
+
+  if (existingStock) {
+    existingStock.quantity += item.quantity;
+    await existingStock.save();
+  } else {
+    await Inventory.create({
+      chairType:     rawName,
+      colour:        "Unknown",
+      location:      "WAREHOUSE",
+      locationType:  "WAREHOUSE",
+      type:          "FULL",
+      quantity:      item.quantity,
+      minQuantity:   0,
+      maxQuantity:   0,
+      remark:        `Returned from order ${returnItem.orderId}`,
+      createdBy:     req.user?.id,
+      createdByRole: req.user?.role,
+    });
+  }
+}
     returnItem.movedToInventory = true;
     returnItem.status = "Completed";
     await returnItem.save();
 
     res.status(200).json({ success: true, message: "GOOD items added to inventory" });
   } catch (error) {
+    console.error("Move to inventory error:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -175,6 +216,11 @@ export const moveReturnToFitting = async (req, res) => {
     const returnItem = await Return.findById(req.params.id);
     if (!returnItem) return res.status(404).json({ message: "Return item not found" });
 
+    // ✅ ADD: Spare parts should never go to fitting
+    if (returnItem.orderType === "SPARE") {
+      return res.status(400).json({ message: "Spare part returns go directly to inventory, not fitting" });
+    }
+
     if (returnItem.status !== "Pending") {
       return res.status(400).json({ message: "Return is already processed" });
     }
@@ -184,7 +230,6 @@ export const moveReturnToFitting = async (req, res) => {
 
     res.status(200).json({ message: "Return moved to fitting successfully" });
   } catch (error) {
-    console.error("Move to fitting error:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -281,6 +326,73 @@ export const fittingDecision = async (req, res) => {
     });
   } catch (error) {
     console.error("Fitting decision error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+// ─── moveSpareReturnToInventory ──────────────────────────────────
+export const moveSpareReturnToInventory = async (req, res) => {
+  try {
+    const returnItem = await Return.findById(req.params.id);
+    if (!returnItem) return res.status(404).json({ message: "Return not found" });
+
+    if (returnItem.orderType !== "SPARE") {
+      return res.status(400).json({ message: "This endpoint is only for SPARE order returns" });
+    }
+    if (returnItem.status !== "Pending") {
+      return res.status(400).json({ message: "Return already processed" });
+    }
+    if (returnItem.movedToInventory) {
+      return res.status(400).json({ message: "Already moved to inventory" });
+    }
+
+    for (const item of returnItem.items) {
+      // ✅ Find the existing warehouse record for this part (any WAREHOUSE locationType)
+      const existingStock = await Inventory.findOne({
+        partName: { $regex: `^${item.name.trim()}$`, $options: "i" },
+        type: "SPARE",
+        locationType: "WAREHOUSE",
+      }).sort({ quantity: -1 }); // pick the one with most stock if multiple
+
+      if (existingStock) {
+        // ✅ Add to the existing record
+        existingStock.quantity += item.quantity;
+        await existingStock.save();
+      } else {
+        // ✅ No existing record — create one at WAREHOUSE
+        await Inventory.create({
+          partName:      item.name,
+          location:      "WAREHOUSE",
+          locationType:  "WAREHOUSE",
+          type:          "SPARE",
+          quantity:      item.quantity,
+          minQuantity:   0,
+          maxQuantity:   0,
+          remark:        `Returned from order ${returnItem.orderId}`,
+          createdBy:     req.user?.id,
+          createdByRole: req.user?.role,
+        });
+      }
+    }
+
+    returnItem.movedToInventory = true;
+    returnItem.status = "Completed";
+    await returnItem.save();
+
+    res.status(200).json({ success: true, message: "Spare parts added to inventory" });
+  } catch (error) {
+    console.error("Move spare return to inventory error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+// ─── getAllBadReturns ────────────────────────────────────────────
+export const getAllBadReturns = async (req, res) => {
+  try {
+    const badReturns = await BadReturn.find()
+      .populate("createdBy", "name role")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({ success: true, data: badReturns });
+  } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };

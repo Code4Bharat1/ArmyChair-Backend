@@ -82,6 +82,7 @@ const returnSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    orderType: { type: String, enum: ["FULL", "SPARE"], default: "FULL" },
   },
   { timestamps: true }
 );

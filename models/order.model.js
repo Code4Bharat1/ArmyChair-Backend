@@ -19,7 +19,11 @@ dispatchedQuantity: {
   type: Number,
   default: 0,
 },
-
+dispatchedItems: {
+  type: Map,
+  of: Number,
+  default: {},
+},
 dispatches: [{
   quantity: Number,
   itemQuantities: { type: Map, of: Number },  // ← ADD THIS

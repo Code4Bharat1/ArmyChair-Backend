@@ -113,10 +113,11 @@ export const createInventory = async (req, res) => {
           location,
           type: "FULL",
           minQuantity: Number(minQuantity),
-          maxQuantity:
-            req.user?.role === "admin" && maxQuantity !== undefined
-              ? Number(maxQuantity)
-              : 0,
+          // maxQuantity:
+          //   req.user?.role === "admin" && maxQuantity !== undefined
+          //     ? Number(maxQuantity)
+          //     : 0,
+          maxQuantity: maxQuantity !== undefined ? Number(maxQuantity) : 0,
           createdBy: req.user?.id,
           createdByRole: req.user?.role,
         },
@@ -196,6 +197,23 @@ export const getProductionInventory = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+export const getFittingStock = async (req, res) => {
+  try {
+    const parts = await Inventory.find({
+      locationType: "FITTING",
+    })
+      .populate("vendor", "name")
+      .sort({ chairType: 1, partName: 1 });
+
+    res.status(200).json({
+      success: true,
+      data: parts,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 //   UPDATE INVENTORY
 export const updateInventory = async (req, res) => {
   try {
@@ -210,10 +228,13 @@ export const updateInventory = async (req, res) => {
     const updateData = {};
 
     // 👑 ADMIN ONLY maxQuantity
-    if (
-      req.user?.role === "admin" &&
-      req.body.maxQuantity !== undefined
-    ) {
+    // if (
+    //   req.user?.role === "admin" &&
+    //   req.body.maxQuantity !== undefined
+    // ) {
+    //   updateData.maxQuantity = Number(req.body.maxQuantity);
+    // }
+     if (req.body.maxQuantity !== undefined) {
       updateData.maxQuantity = Number(req.body.maxQuantity);
     }
 
@@ -347,8 +368,8 @@ export const createSpareParts = async (req, res) => {
 
     // ✅ Derive locationType from location string (mirrors the schema hook)
     let locationType = "WAREHOUSE";
-    if (normalizedLocation.startsWith("PROD_")) locationType = "PRODUCTION";
-    if (normalizedLocation.startsWith("FIT_")) locationType = "FITTING";
+if (normalizedLocation.startsWith("PROD_")) locationType = "PRODUCTION";
+if (normalizedLocation.startsWith("FIT_") || normalizedLocation === "FITTING_SECTION") locationType = "FITTING";
 
     let vendorId = null;
     if (vendor) {
@@ -386,10 +407,11 @@ export const createSpareParts = async (req, res) => {
     locationType,
     type: "SPARE",
     minQuantity: Number(minQuantity || 0),
-    maxQuantity:
-      req.user?.role === "admin" && maxQuantity !== undefined
-        ? Number(maxQuantity)
-        : 0,
+    // maxQuantity:
+    //   req.user?.role === "admin" && maxQuantity !== undefined
+    //     ? Number(maxQuantity)
+    //     : 0,
+    maxQuantity: maxQuantity !== undefined ? Number(maxQuantity) : 0,
     createdBy: req.user?.id,
     createdByRole: req.user?.role,
     ...(vendorId && { vendor: vendorId }), // ✅ ONLY HERE
@@ -471,10 +493,13 @@ export const updateSparePart = async (req, res) => {
       updateData.remark = remark?.trim();
     }
     // 👑 ADMIN ONLY: allow updating maxQuantity
-    if (
-      req.user?.role === "admin" &&
-      maxQuantity !== undefined
-    ) {
+    // if (
+    //   req.user?.role === "admin" &&
+    //   maxQuantity !== undefined
+    // ) {
+    //   updateData.maxQuantity = Number(maxQuantity);
+    // }
+    if (maxQuantity !== undefined) {
       updateData.maxQuantity = Number(maxQuantity);
     }
 
@@ -661,9 +686,9 @@ export const bulkUploadSpareParts = async (req, res) => {
       if (Number.isNaN(qty) || qty <= 0) continue;
 
       // ✅ LOCATION TYPE
-      let locationType = "WAREHOUSE";
-      if (location.startsWith("PROD_")) locationType = "PRODUCTION";
-      if (location.startsWith("FIT_")) locationType = "FITTING";
+     let locationType = "WAREHOUSE";
+if (location.startsWith("PROD_")) locationType = "PRODUCTION";
+if (location.startsWith("FIT_") || location === "FITTING_SECTION") locationType = "FITTING";
 
       const vendorName = getValue(row, COLUMN_MAP.vendor);
 
@@ -772,10 +797,11 @@ export const bulkUploadFullChairs = async (req, res) => {
             vendor: vendorDoc?._id,
             type: "FULL",
             minQuantity: 50,
-            maxQuantity:
-              req.user?.role === "admin" && maxQuantity
-                ? Number(maxQuantity)
-                : 0,
+            // maxQuantity:
+            //   req.user?.role === "admin" && maxQuantity
+            //     ? Number(maxQuantity)
+            //     : 0,
+              maxQuantity: maxQuantity !== undefined ? Number(maxQuantity) : 0,
             createdBy: req.user.id,
             createdByRole: req.user.role,
           },

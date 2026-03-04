@@ -498,19 +498,19 @@ export const getOrderByOrderId = async (req, res) => {
       order.items?.length
         ? order.items
         : order.chairModel
-        ? [{ name: order.chairModel, quantity: order.quantity, fittingStatus: "PENDING" }]
-        : [];
+          ? [{ name: order.chairModel, quantity: order.quantity, fittingStatus: "PENDING" }]
+          : [];
 
     res.status(200).json({
       success: true,
       order: {
-        orderId:      order.orderId,
-        chairModel:   order.chairModel,
-        quantity:     order.quantity,
+        orderId: order.orderId,
+        chairModel: order.chairModel,
+        quantity: order.quantity,
         items,                          // ← THIS was missing
         dispatchedTo: order.dispatchedTo,
-        salesPerson:  order.salesPerson,
-        progress:     order.progress,   // ← also send progress so modal can show warning
+        salesPerson: order.salesPerson,
+        progress: order.progress,   // ← also send progress so modal can show warning
       },
     });
   } catch (error) {
@@ -963,16 +963,17 @@ export const partialDispatch = async (req, res) => {
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     const dispatchableStatuses = [
-  "READY_FOR_DISPATCH",
-  "PARTIALLY_DISPATCHED",
-  "FITTING_IN_PROGRESS",   // ← allow partial SKU dispatch mid-fitting
-  "FITTING_COMPLETED", 
-   "WAREHOUSE_COLLECTED",    // ← allow dispatch after all fitting done
-];
+      "READY_FOR_DISPATCH",
+      "PARTIALLY_DISPATCHED",
+      "FITTING_IN_PROGRESS",   // ← allow partial SKU dispatch mid-fitting
+      "FITTING_COMPLETED",
+      "WAREHOUSE_COLLECTED",
+      "ORDER_PLACED"   // ← allow dispatch after all fitting done
+    ];
 
-if (!dispatchableStatuses.includes(order.progress)) {
-  return res.status(400).json({ message: "Order is not ready for dispatch" });
-}
+    if (!dispatchableStatuses.includes(order.progress)) {
+      return res.status(400).json({ message: "Order is not ready for dispatch" });
+    }
 
     const orderItems = order.items?.length
       ? order.items
@@ -991,9 +992,19 @@ if (!dispatchableStatuses.includes(order.progress)) {
       if (!orderItem) return res.status(400).json({ message: `Item not found: ${itemName}` });
 
       let alreadyForItem = 0;
-      order.dispatches?.forEach((d) => {
-        alreadyForItem += Number(d.itemQuantities?.[itemName] || 0);
-      });
+
+      if (order.orderType === "SPARE") {
+        // ✅ Use dispatchedItems map for accurate per-item tracking
+        const key = itemName.toLowerCase().trim();
+        alreadyForItem = order.dispatchedItems?.get
+          ? (order.dispatchedItems.get(key) || 0)
+          : (order.dispatchedItems?.[key] || 0);
+      } else {
+        // FULL chairs — use dispatches array as before
+        order.dispatches?.forEach((d) => {
+          alreadyForItem += Number(d.itemQuantities?.[itemName] || 0);
+        });
+      }
 
       const remainingForItem = orderItem.quantity - alreadyForItem;
       if (qtyNum > remainingForItem) {
@@ -1004,48 +1015,64 @@ if (!dispatchableStatuses.includes(order.progress)) {
     }
 
     // FULL order: deduct inventory per item (strip colour suffix for lookup)
+    // Deduct inventory for FULL (warehouse direct) AND SPARE orders
     const shouldDeductInventory =
-  order.orderType === "FULL" && order.warehouseDirect === true;
+      (order.orderType === "FULL" && order.warehouseDirect === true) ||
+      order.orderType === "SPARE";
 
-if (shouldDeductInventory) {
-  for (const [itemName, qty] of Object.entries(itemQuantities)) {
-    const qtyNum = Number(qty);
-    if (qtyNum <= 0) continue;
+    if (shouldDeductInventory) {
+      for (const [itemName, qty] of Object.entries(itemQuantities)) {
+        const qtyNum = Number(qty);
+        if (qtyNum <= 0) continue;
 
-    const baseChairType = stripColourSuffix(itemName);
-    const colour = extractColour(itemName);
+        let records;
 
-    const inventoryQuery = {
-      type: "FULL",
-      chairType: { $regex: new RegExp(`^${baseChairType}$`, "i") },
-      quantity: { $gt: 0 },
-    };
+        if (order.orderType === "SPARE") {
+          // ✅ SPARE: query by partName
+          records = await Inventory.find({
+            type: "SPARE",
+            partName: { $regex: new RegExp(`^${itemName.trim()}$`, "i") },
+            quantity: { $gt: 0 },
+          }).sort({ quantity: -1 });
+        } else {
+          // FULL: query by chairType
+          const baseChairType = stripColourSuffix(itemName);
+          const colour = extractColour(itemName);
 
-    if (colour) {
-      inventoryQuery.colour = { $regex: new RegExp(`^${colour}$`, "i") };
+          const inventoryQuery = {
+            type: "FULL",
+            chairType: { $regex: new RegExp(`^${baseChairType}$`, "i") },
+            quantity: { $gt: 0 },
+          };
+
+          if (colour) {
+            inventoryQuery.colour = { $regex: new RegExp(`^${colour}$`, "i") };
+          }
+
+          records = await Inventory.find(inventoryQuery).sort({ quantity: -1 });
+        }
+
+        const available = records.reduce((s, r) => s + r.quantity, 0);
+
+        if (available < qtyNum) {
+          return res.status(400).json({
+            message: `Insufficient stock for ${itemName}. Available: ${available}, Required: ${qtyNum}`,
+          });
+        }
+
+        let remaining = qtyNum;
+        for (const record of records) {
+          if (remaining <= 0) break;
+          const deduct = Math.min(record.quantity, remaining);
+          remaining -= deduct;
+          await Inventory.updateOne(
+            { _id: record._id },
+            { $inc: { quantity: -deduct } }
+          );
+        }
+      }
     }
-
-    const records = await Inventory.find(inventoryQuery).sort({ quantity: -1 });
-    const available = records.reduce((s, r) => s + r.quantity, 0);
-
-    if (available < qtyNum) {
-      return res.status(400).json({
-        message: `Insufficient stock for ${itemName}. Available: ${available}, Required: ${qtyNum}`,
-      });
-    }
-
-    let remaining = qtyNum;
-    for (const record of records) {
-      if (remaining <= 0) break;
-      const deduct = Math.min(record.quantity, remaining);
-      remaining -= deduct;
-      await Inventory.updateOne(
-        { _id: record._id },
-        { $inc: { quantity: -deduct } }
-      );
-    }
-  }
-}
+    // Push dispatch record
     order.dispatches.push({
       quantity: totalNow,
       itemQuantities,
@@ -1054,8 +1081,44 @@ if (shouldDeductInventory) {
       date: new Date(),
     });
 
-    order.dispatchedQuantity = alreadyDispatched + totalNow;
-    order.progress = order.dispatchedQuantity >= totalOrderQty ? "DISPATCHED" : "PARTIALLY_DISPATCHED";
+    order.dispatchedQuantity = (order.dispatchedQuantity || 0) + totalNow;
+
+    // ✅ Per-item tracking for SPARE orders
+    if (order.orderType === "SPARE") {
+      for (const [itemName, qty] of Object.entries(itemQuantities)) {
+        const qtyNum = Number(qty || 0);
+        if (qtyNum <= 0) continue;
+        const key = itemName.toLowerCase().trim();
+        const current = order.dispatchedItems?.get
+          ? (order.dispatchedItems.get(key) || 0)
+          : (order.dispatchedItems?.[key] || 0);
+        if (order.dispatchedItems?.set) {
+          order.dispatchedItems.set(key, current + qtyNum);
+        } else {
+          if (!order.dispatchedItems) order.dispatchedItems = {};
+          order.dispatchedItems[key] = current + qtyNum;
+        }
+      }
+      order.markModified("dispatchedItems");
+    }
+
+    // ✅ Completion check — SPARE vs FULL
+    let allFullyDispatched;
+
+    if (order.orderType === "SPARE") {
+      allFullyDispatched = orderItems.every((item) => {
+        const key = item.name.toLowerCase().trim();
+        const dispatched = order.dispatchedItems?.get
+          ? (order.dispatchedItems.get(key) || 0)
+          : (order.dispatchedItems?.[key] || 0);
+        return dispatched >= item.quantity;
+      });
+    } else {
+      // FULL chairs — unchanged
+      allFullyDispatched = order.dispatchedQuantity >= totalOrderQty;
+    }
+
+    order.progress = allFullyDispatched ? "DISPATCHED" : "PARTIALLY_DISPATCHED";
 
     await order.save();
 
@@ -1069,7 +1132,10 @@ if (shouldDeductInventory) {
 
     res.json({
       success: true,
-      message: `Dispatched ${totalNow} units. ${order.progress === "DISPATCHED" ? "Order fully complete." : `${totalOrderQty - order.dispatchedQuantity} remaining.`}`,
+      message: `Dispatched ${totalNow} units. ${order.progress === "DISPATCHED"
+          ? "Order fully complete."
+          : `${totalOrderQty - order.dispatchedQuantity} remaining.`
+        }`,
       order,
     });
   } catch (err) {
@@ -1096,23 +1162,23 @@ export const updateItemFitting = async (req, res) => {
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     const anyCompleted = order.items.some(
-  (i) => i.fittingStatus === "COMPLETED"
-);
+      (i) => i.fittingStatus === "COMPLETED"
+    );
 
-const allCompleted = order.items.every(
-  (i) => i.fittingStatus === "COMPLETED"
-);
+    const allCompleted = order.items.every(
+      (i) => i.fittingStatus === "COMPLETED"
+    );
 
 
 
-let newProgress = order.progress;
+    let newProgress = order.progress;
 
-if (allCompleted) {
-  newProgress = "FITTING_COMPLETED";
-} else {
-  // stay in fitting no matter what
-  newProgress = "FITTING_IN_PROGRESS";
-}
+    if (allCompleted) {
+      newProgress = "FITTING_COMPLETED";
+    } else {
+      // stay in fitting no matter what
+      newProgress = "FITTING_IN_PROGRESS";
+    }
 
     if (newProgress !== order.progress) {
       await Order.findByIdAndUpdate(req.params.id, { $set: { progress: newProgress } });
