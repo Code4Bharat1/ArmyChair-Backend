@@ -55,6 +55,10 @@ const COLUMN_MAP = {
 //    "2020 CHAIR BLACK (black)" → "2020 CHAIR BLACK"
 //    so inventory lookup matches chairType correctly.
 // ============================================================
+function escapeRegex(str = "") {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function stripColourSuffix(name = "") {
   // Removes a trailing " (anything)" — case insensitive
   return name.replace(/\s*\([^)]*\)\s*$/, "").trim();
@@ -1029,11 +1033,12 @@ export const partialDispatch = async (req, res) => {
 
         if (order.orderType === "SPARE") {
           // ✅ SPARE: query by partName
-          records = await Inventory.find({
-            type: "SPARE",
-            partName: { $regex: new RegExp(`^${itemName.trim()}$`, "i") },
-            quantity: { $gt: 0 },
-          }).sort({ quantity: -1 });
+         records = await Inventory.find({
+  type: "SPARE",
+  locationType: "WAREHOUSE",
+  partName: { $regex: new RegExp(`^${escapeRegex(itemName.trim())}$`, "i") },
+  quantity: { $gt: 0 },
+}).sort({ quantity: -1 });
         } else {
           // FULL: query by chairType
           const baseChairType = stripColourSuffix(itemName);
