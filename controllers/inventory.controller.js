@@ -388,10 +388,11 @@ if (normalizedLocation.startsWith("FIT_") || normalizedLocation === "FITTING_SEC
 
     // ✅ Filter matches the unique index: partName + location + type only
     const filter = {
-      partName: normalizedPartName,
-      location: normalizedLocation,
-      type: "SPARE",
-    };
+  partName: normalizedPartName,
+  location: normalizedLocation,
+  vendor: vendorId || null,
+  type: "SPARE",
+};
 
     const update = {
   $inc: { quantity: qty },
@@ -406,15 +407,11 @@ if (normalizedLocation.startsWith("FIT_") || normalizedLocation === "FITTING_SEC
     location: normalizedLocation,
     locationType,
     type: "SPARE",
+    vendor: vendorId || null,
     minQuantity: Number(minQuantity || 0),
-    // maxQuantity:
-    //   req.user?.role === "admin" && maxQuantity !== undefined
-    //     ? Number(maxQuantity)
-    //     : 0,
     maxQuantity: maxQuantity !== undefined ? Number(maxQuantity) : 0,
     createdBy: req.user?.id,
     createdByRole: req.user?.role,
-    ...(vendorId && { vendor: vendorId }), // ✅ ONLY HERE
   },
 };
 
@@ -712,31 +709,32 @@ if (
       }
 
     await Inventory.findOneAndUpdate(
-  {
+{
+  partName: partName.trim(),
+  location: normalizedLocation,
+  vendor: vendorDoc?._id || null,
+  type: "SPARE"
+},
+{
+  $inc: { quantity: qty },
+
+  $set: {
+    chalanNo: chalanNo?.trim() || ""
+  },
+
+  $setOnInsert: {
     partName: partName.trim(),
-    location: location.trim(),
+    location: normalizedLocation,
+    locationType,
+    vendor: vendorDoc?._id || null,
     type: "SPARE",
-  },
-  {
-    $inc: { quantity: qty },
-
-    $set: {
-      chalanNo: chalanNo?.trim() || "",
-      ...(vendorDoc && { vendor: vendorDoc._id })  // ✅ vendor here
-    },
-
-    $setOnInsert: {
-      partName: partName.trim(),
-      location: location.trim(),
-      locationType,
-      type: "SPARE",
-      minQuantity: minQuantity ? Number(minQuantity) : 0,
-      maxQuantity: maxQuantity ? Number(maxQuantity) : 0,
-      createdBy: req.user.id,
-      createdByRole: req.user.role
-    },
-  },
-  { upsert: true }
+    minQuantity: minQuantity ? Number(minQuantity) : 0,
+    maxQuantity: maxQuantity ? Number(maxQuantity) : 0,
+    createdBy: req.user.id,
+    createdByRole: req.user.role
+  }
+},
+{ upsert: true }
 );
 
       inserted++;
@@ -787,35 +785,33 @@ export const bulkUploadFullChairs = async (req, res) => {
       }
 
       await Inventory.findOneAndUpdate(
-        {
-          chairType: chairType.trim(),
-          colour: colour.trim(),
-          location: location.trim(),
-          vendor: vendorDoc?._id, // ✅ FIX
-          type: "FULL",
-        },
-        {
-          $inc: { quantity: Number(quantity) },
-          $set: {
-            mesh: mesh?.trim() || "",
-            remark: remark?.trim() || "",
-            chalanNo: chalanNo?.trim() || "",   // ✅ ADD
-          },
-          $setOnInsert: {
-            vendor: vendorDoc?._id,
-            type: "FULL",
-            minQuantity: 50,
-            // maxQuantity:
-            //   req.user?.role === "admin" && maxQuantity
-            //     ? Number(maxQuantity)
-            //     : 0,
-              maxQuantity: maxQuantity !== undefined ? Number(maxQuantity) : 0,
-            createdBy: req.user.id,
-            createdByRole: req.user.role,
-          },
-        },
-        { upsert: true }
-      );
+{
+  chairType: chairType.trim(),
+  colour: colour.trim(),
+  location: location.trim(),
+  vendor: vendorDoc?._id || null,
+  type: "FULL",
+},
+{
+  $inc: { quantity: Number(quantity) },
+
+  $set: {
+    mesh: mesh?.trim() || "",
+    remark: remark?.trim() || "",
+    chalanNo: chalanNo?.trim() || "",
+  },
+
+  $setOnInsert: {
+    vendor: vendorDoc?._id || null,
+    type: "FULL",
+    minQuantity: 50,
+    maxQuantity: maxQuantity !== undefined ? Number(maxQuantity) : 0,
+    createdBy: req.user.id,
+    createdByRole: req.user.role,
+  },
+},
+{ upsert: true }
+);
 
       inserted++;
     }
