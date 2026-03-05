@@ -1020,9 +1020,11 @@ export const partialDispatch = async (req, res) => {
 
     // FULL order: deduct inventory per item (strip colour suffix for lookup)
     // Deduct inventory for FULL (warehouse direct) AND SPARE orders
-    const shouldDeductInventory =
-      (order.orderType === "FULL" && order.warehouseDirect === true) ||
-      order.orderType === "SPARE";
+   // WITH this:
+const shouldDeductInventory =
+  (order.orderType === "FULL" && !order.productionWorker) ||
+  order.orderType === "SPARE";
+      console.log("🔍 shouldDeduct:", shouldDeductInventory, "| warehouseDirect:", order.warehouseDirect, "| orderType:", order.orderType);
 
     if (shouldDeductInventory) {
       for (const [itemName, qty] of Object.entries(itemQuantities)) {
@@ -1055,6 +1057,10 @@ export const partialDispatch = async (req, res) => {
           }
 
           records = await Inventory.find(inventoryQuery).sort({ quantity: -1 });
+          if (records.length === 0 && colour) {
+  delete inventoryQuery.colour;
+  records = await Inventory.find(inventoryQuery).sort({ quantity: -1 });
+}
         }
 
         const available = records.reduce((s, r) => s + r.quantity, 0);
