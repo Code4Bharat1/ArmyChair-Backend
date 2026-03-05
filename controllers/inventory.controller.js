@@ -686,10 +686,18 @@ export const bulkUploadSpareParts = async (req, res) => {
       if (Number.isNaN(qty) || qty <= 0) continue;
 
       // ✅ LOCATION TYPE
-     let locationType = "WAREHOUSE";
-if (location.startsWith("PROD_")) locationType = "PRODUCTION";
-if (location.startsWith("FIT_") || location === "FITTING_SECTION") locationType = "FITTING";
+     const normalizedLocation = String(location || "").trim();
 
+let locationType = "WAREHOUSE";
+
+if (normalizedLocation.startsWith("PROD_"))
+  locationType = "PRODUCTION";
+
+if (
+  normalizedLocation.startsWith("FIT_") ||
+  normalizedLocation === "FITTING_SECTION"
+)
+  locationType = "FITTING";
       const vendorName = getValue(row, COLUMN_MAP.vendor);
 
       let vendorDoc = null;
@@ -711,21 +719,21 @@ if (location.startsWith("FIT_") || location === "FITTING_SECTION") locationType 
   },
   {
     $inc: { quantity: qty },
+
     $set: {
       chalanNo: chalanNo?.trim() || "",
-      // ✅ REMOVED locationType from here
-      ...(vendorDoc && { vendor: vendorDoc._id }),
+      ...(vendorDoc && { vendor: vendorDoc._id })  // ✅ vendor here
     },
+
     $setOnInsert: {
       partName: partName.trim(),
       location: location.trim(),
-      locationType, // ✅ Only here
+      locationType,
       type: "SPARE",
       minQuantity: minQuantity ? Number(minQuantity) : 0,
       maxQuantity: maxQuantity ? Number(maxQuantity) : 0,
       createdBy: req.user.id,
-      createdByRole: req.user.role,
-      ...(vendorDoc && { vendor: vendorDoc._id }),
+      createdByRole: req.user.role
     },
   },
   { upsert: true }
