@@ -2,6 +2,7 @@ import User from "../models/User.model.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { verifyCaptcha } from "../utils/captcha.js";
+import activityLogModel from "../models/activityLog.model.js";
 
 const loginAttempts = new Map();
 
@@ -228,13 +229,161 @@ export const changePassword = async (req, res) => {
       { $set: { password: hashedPassword } }
     );
 
-    return res.status(200).json({
-      message: "Password updated successfully",
+    // ✅ ADD THIS
+    await logActivity(req, {
+      action: "PASSWORD_CHANGE",
+      module: "Auth",
+      entityType: "User",
+      entityId: req.user.id,
+      description: `${req.user.name || "User"} changed their password`,
     });
+
+    return res.status(200).json({ message: "Password updated successfully" });
   } catch (error) {
-    return res.status(500).json({
-      message: error.message,
-    });
+    return res.status(500).json({ message: error.message });
   }
 };
 
+/**
+ * =========================
+ * FORGOT PASSWORD - VERIFY IDENTITY
+ * =========================
+ */
+export const verifyIdentity = async (req, res) => {
+  try {
+    const { email, aadharNumber, dateOfBirth } = req.body;
+
+    if (!email || !aadharNumber || !dateOfBirth) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({ message: "No account found with this email" });
+    }
+
+    // Check Aadhar
+    if (user.aadharNumber !== aadharNumber) {
+      return res.status(400).json({ message: "Aadhar number does not match" });
+    }
+
+    // Check DOB (compare date only, ignore time)
+    const inputDob = new Date(dateOfBirth).toDateString();
+    const storedDob = new Date(user.dateOfBirth).toDateString();
+
+    if (inputDob !== storedDob) {
+      return res.status(400).json({ message: "Date of birth does not match" });
+    }
+
+    // Issue a short-lived reset token
+    const resetToken = jwt.sign(
+      { id: user._id, purpose: "reset" },
+      process.env.JWT_SECRET,
+      { expiresIn: "10m" }
+    );
+
+    return res.status(200).json({ message: "Identity verified", resetToken });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * =========================
+ * FORGOT PASSWORD - SET NEW PASSWORD
+ * =========================
+ */
+export const resetPassword = async (req, res) => {
+  try {
+    const { resetToken, newPassword } = req.body;
+
+    if (!resetToken || !newPassword)
+      return res.status(400).json({ message: "Token and new password are required" });
+
+    if (newPassword.length < 6)
+      return res.status(400).json({ message: "Password must be at least 6 characters" });
+
+    let decoded;
+    try {
+      decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
+    } catch {
+      return res.status(401).json({ message: "Reset session expired. Please try again." });
+    }
+
+    if (decoded.purpose !== "reset")
+      return res.status(401).json({ message: "Invalid reset token" });
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await User.updateOne({ _id: decoded.id }, { $set: { password: hashedPassword } });
+
+    // ✅ ADD THIS — manually log since no req.user exists
+    const user = await User.findById(decoded.id).select("name role");
+    await activityLogModel.create({
+      user: decoded.id,
+      userName: user?.name || "Unknown",
+      userRole: user?.role || "unknown",
+      action: "PASSWORD_RESET",
+      module: "Auth",
+      entityType: "User",
+      entityId: decoded.id,
+      description: `${user?.name || "A user"} reset their password via Forgot Password`,
+    });
+
+    return res.status(200).json({ message: "Password reset successful" });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+/**
+ * =========================
+ * UPDATE STAFF (ADMIN)
+ * =========================
+ */
+export const updateStaff = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email, mobile, role, dateOfBirth, bloodGroup, photo, aadharNumber, aadharPhotoFront, aadharPhotoBack } = req.body;
+
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: "Staff not found" });
+
+    // Check email/aadhar conflict with OTHER users
+    if (email && email !== user.email) {
+      const exists = await User.findOne({ email, _id: { $ne: id } });
+      if (exists) return res.status(400).json({ message: "Email already in use" });
+    }
+    if (aadharNumber && aadharNumber !== user.aadharNumber) {
+      const exists = await User.findOne({ aadharNumber, _id: { $ne: id } });
+      if (exists) return res.status(400).json({ message: "Aadhar already in use" });
+    }
+
+    const updated = await User.findByIdAndUpdate(
+      id,
+      { name, email, mobile, role, dateOfBirth, bloodGroup, photo, aadharNumber, aadharPhotoFront, aadharPhotoBack },
+      { new: true, runValidators: true, select: "-password" }
+    );
+
+    return res.status(200).json({ message: "Staff updated successfully", user: updated });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * =========================
+ * DELETE STAFF (ADMIN)
+ * =========================
+ */
+export const deleteStaff = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: "Staff not found" });
+
+    await User.findByIdAndDelete(id);
+    return res.status(200).json({ message: "Staff deleted successfully" });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};

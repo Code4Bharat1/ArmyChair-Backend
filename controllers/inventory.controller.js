@@ -59,17 +59,17 @@ export const createInventory = async (req, res) => {
   try {
     // Destructure chalanNo from req.body
     const {
-  chairType,
-  colour,
-  mesh,
-  remark,
-  vendor,
-  quantity,
-  minQuantity,
-  maxQuantity,
-  location,
-  chalanNo,
-} = req.body || {};
+      chairType,
+      colour,
+      mesh,
+      remark,
+      vendor,
+      quantity,
+      minQuantity,
+      maxQuantity,
+      location,
+      chalanNo,
+    } = req.body || {};
 
 
 
@@ -234,7 +234,7 @@ export const updateInventory = async (req, res) => {
     // ) {
     //   updateData.maxQuantity = Number(req.body.maxQuantity);
     // }
-     if (req.body.maxQuantity !== undefined) {
+    if (req.body.maxQuantity !== undefined) {
       updateData.maxQuantity = Number(req.body.maxQuantity);
     }
 
@@ -368,8 +368,8 @@ export const createSpareParts = async (req, res) => {
 
     // ✅ Derive locationType from location string (mirrors the schema hook)
     let locationType = "WAREHOUSE";
-if (normalizedLocation.startsWith("PROD_")) locationType = "PRODUCTION";
-if (normalizedLocation.startsWith("FIT_") || normalizedLocation === "FITTING_SECTION") locationType = "FITTING";
+    if (normalizedLocation.startsWith("PROD_")) locationType = "PRODUCTION";
+    if (normalizedLocation.startsWith("FIT_") || normalizedLocation === "FITTING_SECTION") locationType = "FITTING";
 
     let vendorId = null;
     if (vendor) {
@@ -388,32 +388,32 @@ if (normalizedLocation.startsWith("FIT_") || normalizedLocation === "FITTING_SEC
 
     // ✅ Filter matches the unique index: partName + location + type only
     const filter = {
-  partName: normalizedPartName,
-  location: normalizedLocation,
-  vendor: vendorId || null,
-  type: "SPARE",
-};
+      partName: normalizedPartName,
+      location: normalizedLocation,
+      vendor: vendorId || null,
+      type: "SPARE",
+    };
 
     const update = {
-  $inc: { quantity: qty },
+      $inc: { quantity: qty },
 
-  $set: {
-    chalanNo: chalanNo?.trim() || "",
-    remark: remark?.trim() || "",
-  },
+      $set: {
+        chalanNo: chalanNo?.trim() || "",
+        remark: remark?.trim() || "",
+      },
 
-  $setOnInsert: {
-    partName: normalizedPartName,
-    location: normalizedLocation,
-    locationType,
-    type: "SPARE",
-    vendor: vendorId || null,
-    minQuantity: Number(minQuantity || 0),
-    maxQuantity: maxQuantity !== undefined ? Number(maxQuantity) : 0,
-    createdBy: req.user?.id,
-    createdByRole: req.user?.role,
-  },
-};
+      $setOnInsert: {
+        partName: normalizedPartName,
+        location: normalizedLocation,
+        locationType,
+        type: "SPARE",
+        vendor: vendorId || null,
+        minQuantity: Number(minQuantity || 0),
+        maxQuantity: maxQuantity !== undefined ? Number(maxQuantity) : 0,
+        createdBy: req.user?.id,
+        createdByRole: req.user?.role,
+      },
+    };
 
     const sparePart = await Inventory.findOneAndUpdate(filter, update, {
       new: true,
@@ -683,18 +683,19 @@ export const bulkUploadSpareParts = async (req, res) => {
       if (Number.isNaN(qty) || qty <= 0) continue;
 
       // ✅ LOCATION TYPE
-     const normalizedLocation = String(location || "").trim();
+      const normalizedLocation = String(location || "").trim();
+      const loc = normalizedLocation.toUpperCase();
 
-let locationType = "WAREHOUSE";
+      let locationType = "WAREHOUSE";
 
-if (normalizedLocation.startsWith("PROD_"))
-  locationType = "PRODUCTION";
+      if (normalizedLocation.startsWith("PROD_"))
+        locationType = "PRODUCTION";
 
-if (
-  normalizedLocation.startsWith("FIT_") ||
-  normalizedLocation === "FITTING_SECTION"
-)
-  locationType = "FITTING";
+      if (
+        normalizedLocation.startsWith("FIT_") ||
+        normalizedLocation === "FITTING_SECTION"
+      )
+        locationType = "FITTING";
       const vendorName = getValue(row, COLUMN_MAP.vendor);
 
       let vendorDoc = null;
@@ -708,34 +709,34 @@ if (
         }
       }
 
-    await Inventory.findOneAndUpdate(
-{
-  partName: partName.trim(),
-  location: normalizedLocation,
-  vendor: vendorDoc?._id || null,
-  type: "SPARE"
-},
-{
-  $inc: { quantity: qty },
+      await Inventory.findOneAndUpdate(
+        {
+          partName: partName.trim(),
+          location: normalizedLocation,
+          vendor: vendorDoc?._id || null,
+          type: "SPARE"
+        },
+        {
+          $inc: { quantity: qty },
 
-  $set: {
-    chalanNo: chalanNo?.trim() || ""
-  },
+          $set: {
+            chalanNo: chalanNo?.trim() || ""
+          },
 
-  $setOnInsert: {
-    partName: partName.trim(),
-    location: normalizedLocation,
-    locationType,
-    vendor: vendorDoc?._id || null,
-    type: "SPARE",
-    minQuantity: minQuantity ? Number(minQuantity) : 0,
-    maxQuantity: maxQuantity ? Number(maxQuantity) : 0,
-    createdBy: req.user.id,
-    createdByRole: req.user.role
-  }
-},
-{ upsert: true }
-);
+          $setOnInsert: {
+            partName: partName.trim(),
+            location: normalizedLocation,
+            locationType,
+            vendor: vendorDoc?._id || null,
+            type: "SPARE",
+            minQuantity: minQuantity ? Number(minQuantity) : 0,
+            maxQuantity: maxQuantity ? Number(maxQuantity) : 0,
+            createdBy: req.user.id,
+            createdByRole: req.user.role
+          }
+        },
+        { upsert: true }
+      );
 
       inserted++;
     }
@@ -785,33 +786,33 @@ export const bulkUploadFullChairs = async (req, res) => {
       }
 
       await Inventory.findOneAndUpdate(
-{
-  chairType: chairType.trim(),
-  colour: colour.trim(),
-  location: location.trim(),
-  vendor: vendorDoc?._id || null,
-  type: "FULL",
-},
-{
-  $inc: { quantity: Number(quantity) },
+        {
+          chairType: chairType.trim(),
+          colour: colour.trim(),
+          location: location.trim(),
+          vendor: vendorDoc?._id || null,
+          type: "FULL",
+        },
+        {
+          $inc: { quantity: Number(quantity) },
 
-  $set: {
-    mesh: mesh?.trim() || "",
-    remark: remark?.trim() || "",
-    chalanNo: chalanNo?.trim() || "",
-  },
+          $set: {
+            mesh: mesh?.trim() || "",
+            remark: remark?.trim() || "",
+            chalanNo: chalanNo?.trim() || "",
+          },
 
-  $setOnInsert: {
-    vendor: vendorDoc?._id || null,
-    type: "FULL",
-    minQuantity: 50,
-    maxQuantity: maxQuantity !== undefined ? Number(maxQuantity) : 0,
-    createdBy: req.user.id,
-    createdByRole: req.user.role,
-  },
-},
-{ upsert: true }
-);
+          $setOnInsert: {
+            vendor: vendorDoc?._id || null,
+            type: "FULL",
+            minQuantity: 50,
+            maxQuantity: maxQuantity !== undefined ? Number(maxQuantity) : 0,
+            createdBy: req.user.id,
+            createdByRole: req.user.role,
+          },
+        },
+        { upsert: true }
+      );
 
       inserted++;
     }
